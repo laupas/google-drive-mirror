@@ -163,6 +163,16 @@ sync-state, sync-status, drive-client, oauth, i18n), `test/integration/` (sync-e
   (`settings.allowedExtensions`, comma-separated, empty = all). Both filters apply to
   **local AND Drive side**, so the reconciler doesn't misinterpret a filtered file as
   "deleted on one side".
+- **Ignore filter (`settings.ignorePatterns` + `src/ignore.ts`):** Blacklist complementary
+  to `allowedExtensions`. Comma-separated patterns; supports plain extensions (`tmp`,
+  `.log`), exact filenames (`.DS_Store`), and glob patterns (`*.tmp`, `drafts/*`,
+  `**/node_modules/**` — `*`/`?` don't cross `/`, `**` does). Patterns without `/` match the
+  filename at any depth; with `/` they anchor to the full sync-relative path. Pure functions
+  `parseIgnorePatterns()`/`isIgnored()` are unit-tested in `test/unit/ignore.test.ts`. Like
+  the extension filter it applies to **both sides** (files AND folders) — an ignored file
+  must never look "deleted on one side" (deletion-safety, covered by an integration test).
+  Also honored in `main.isInScope()` so an ignored path doesn't trigger auto-sync. Patterns
+  are matched against the **sync-relative** path (folder prefix stripped).
 - **i18n (`src/i18n/`):** All user-facing strings go through `t(key, params?)`. Supported
   locales: **en (default & fallback), de, it, fr**. The active language follows Obsidian's
   UI language automatically — `detectLocale()` reads `window.localStorage["language"]`
