@@ -32,6 +32,15 @@ export interface PluginSettings {
    */
   allowedExtensions: string;
 
+  /**
+   * Kommagetrennte Liste von Ignore-Mustern (Blacklist), komplementär zu
+   * `allowedExtensions`. Erlaubt reine Endungen (`tmp`, `.tmp`) sowie
+   * Glob-Muster (`*.log`, `temp/*`, `**​/drafts/**`). Leer = nichts ignorieren.
+   * Greift auf BEIDER Seiten (lokal + Drive), damit eine ignorierte Datei nicht
+   * als „einseitig gelöscht" fehlgedeutet wird. Siehe `src/ignore.ts`.
+   */
+  ignorePatterns: string;
+
   /** Automatischer Sync aktiv? */
   autoSyncEnabled: boolean;
   /** Poll-Intervall für Drive-Änderungen in Sekunden. */
@@ -168,6 +177,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   driveSharedId: "",
   localFolder: "",
   allowedExtensions: "",
+  ignorePatterns: "",
   autoSyncEnabled: false,
   pollIntervalSeconds: 60,
   localDebounceMs: 2500,

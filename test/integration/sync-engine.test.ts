@@ -178,6 +178,75 @@ describe("SyncEngine.sync — Dateiendungs-Whitelist", () => {
   });
 });
 
+describe("SyncEngine.sync — Ignore-Muster (Blacklist)", () => {
+  it("lädt ignorierte lokale Dateien nicht hoch (Endung + Glob)", async () => {
+    // Arrange
+    const { engine, vault, drive } = setup({
+      ignorePatterns: "tmp, *.log",
+    });
+    vault.seed("keep.md", "text");
+    vault.seed("scratch.tmp", "temp");
+    vault.seed("run.log", "log");
+
+    // Act
+    const summary = await engine.sync(false);
+
+    // Assert: nur die nicht-ignorierte Datei wird hochgeladen.
+    expect(summary?.uploaded).toBe(1);
+    expect(drive.calls.createFile).toEqual([{ path: "keep.md" }]);
+  });
+
+  it("lädt ignorierte Drive-Dateien nicht herunter", async () => {
+    // Arrange
+    const { engine, vault, drive } = setup({ ignorePatterns: "*.tmp" });
+    drive.seed({ path: "keep.md", content: "a", md5: "m1" });
+    drive.seed({ path: "junk.tmp", content: "b", md5: "m2" });
+
+    // Act
+    const summary = await engine.sync(false);
+
+    // Assert
+    expect(summary?.downloaded).toBe(1);
+    expect(vault.has("keep.md")).toBe(true);
+    expect(vault.has("junk.tmp")).toBe(false);
+  });
+
+  it("LÖSCHSCHUTZ: eine ignorierte Datei mit beidseitiger Base wird auf KEINER Seite gelöscht", async () => {
+    // Arrange: Datei existiert lokal UND remote, Base bezeugt beidseitig.
+    // Würde der Ignore-Filter nur auf einer Seite greifen, sähe der Reconciler
+    // sie als „auf einer Seite gelöscht" und würde sie auf der anderen löschen.
+    const content = "geheim";
+    const md5 = md5Hex(content);
+    const { engine, vault, drive, store } = setup({
+      ignorePatterns: "*.secret",
+      syncState: {
+        "note.secret": {
+          path: "note.secret",
+          local: true,
+          remote: true,
+          isFolder: false,
+          driveId: "d1",
+          md5,
+          size: content.length,
+          localMtime: 1000,
+          remoteMtime: 1000,
+        },
+      },
+    });
+    vault.seed("note.secret", content);
+    drive.seed({ path: "note.secret", content, md5, id: "d1" });
+
+    // Act
+    const summary = await engine.sync(false);
+
+    // Assert: keine Löschung auf beiden Seiten, Datei bleibt überall erhalten.
+    expect(summary?.deletedLocal).toBe(0);
+    expect(summary?.deletedRemote).toBe(0);
+    expect(drive.calls.trashFile).toEqual([]);
+    expect(vault.has("note.secret")).toBe(true);
+  });
+});
+
 describe("SyncEngine.sync — Scope auf Unterordner (localFolder)", () => {
   it("synct nur Dateien innerhalb von localFolder und strippt das Präfix im Drive-Pfad", async () => {
     // Arrange

@@ -72,6 +72,10 @@ export const it: Partial<Messages> = {
   allowedExtensionsDesc:
     "Separate da virgola, senza il punto (es. “md, png, jpg, pdf”). Vuoto = tutti i tipi di file. Google Docs/Sheets/Slides vengono sempre saltati perché non scaricabili come file binari.",
   allowedExtensionsPlaceholder: "md, png, jpg, pdf",
+  ignorePatternsName: "Motivi da ignorare",
+  ignorePatternsDesc:
+    "Elenco separato da virgole di file/cartelle da escludere dalla sincronizzazione. Accetta estensioni semplici (“tmp”, “.log”) e motivi glob (“*.tmp”, “drafts/*”, “**/node_modules/**”). I percorsi sono relativi alla cartella di sincronizzazione. Vale per entrambi i lati. Vuoto = non ignorare nulla.",
+  ignorePatternsPlaceholder: "*.tmp, .DS_Store, drafts/*",
   neverDeleteRemoteName: "Non eliminare in Google Drive",
   neverDeleteRemoteDesc:
     "Se attivo, un file eliminato localmente NON viene rimosso da Google Drive. Il file resta in Drive e non torna localmente. Tramite “Solo in Drive” qui sotto puoi scaricare di nuovo singoli file localmente. Predefinito: disattivo.",

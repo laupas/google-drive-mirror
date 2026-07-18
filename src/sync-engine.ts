@@ -5,6 +5,7 @@ import { SyncStateStore } from "./sync-state";
 import { SyncStatus } from "./sync-status";
 import { log } from "./logger";
 import { t } from "./i18n";
+import { isIgnored, parseIgnorePatterns } from "./ignore";
 import {
   DriveFile,
   FolderAction,
@@ -34,6 +35,8 @@ interface ScopeSnapshot {
   driveSharedId: string;
   localFolder: string;
   allowedExtensions: string;
+  /** Vorgeparste Ignore-Muster (Blacklist) für die Dauer des Laufs. */
+  ignorePatterns: string[];
 }
 
 /** Leerer Scope-Snapshot (vor dem ersten Lauf). */
@@ -43,6 +46,7 @@ function emptyScope(): ScopeSnapshot {
     driveSharedId: "",
     localFolder: "",
     allowedExtensions: "",
+    ignorePatterns: [],
   };
 }
 
@@ -103,6 +107,7 @@ export class SyncEngine {
       driveSharedId: this.settings.driveSharedId,
       localFolder: this.settings.localFolder,
       allowedExtensions: this.settings.allowedExtensions,
+      ignorePatterns: parseIgnorePatterns(this.settings.ignorePatterns),
     };
     const summary: SyncSummary = {
       uploaded: 0,
@@ -146,6 +151,8 @@ export class SyncEngine {
         if (isSystemPath(path)) continue;
         // Optionaler Dateiendungs-Filter (gilt auch für Drive-Seite).
         if (!this.extensionAllowed(path)) continue;
+        // Ignore-Muster (Blacklist) — beidseitig, s. collectLocal().
+        if (this.isIgnored(path)) continue;
         const list = remoteByPath.get(path);
         if (list) list.push(f);
         else remoteByPath.set(path, [f]);
@@ -194,6 +201,7 @@ export class SyncEngine {
       for (const folder of listing.folders) {
         const path = normalizePath(folder.relativePath);
         if (isSystemPath(path)) continue;
+        if (this.isIgnored(path)) continue;
         if (remoteFolders.has(path)) {
           collidingFolderPaths.add(path);
           continue;
@@ -557,9 +565,11 @@ export class SyncEngine {
     for (const file of this.vault.getFiles()) {
       if (!this.inScope(file.path)) continue;
       if (!this.extensionAllowed(file.path)) continue;
+      const rel = this.toRelative(file.path, prefix);
+      // Ignore-Muster prüfen den SYNC-RELATIVEN Pfad (wie die Drive-Seite).
+      if (this.isIgnored(rel)) continue;
       const content = await this.vault.adapter.readBinary(file.path);
       const md5 = md5Hex(content);
-      const rel = this.toRelative(file.path, prefix);
       result.set(rel, {
         path: rel,
         md5,
@@ -590,6 +600,8 @@ export class SyncEngine {
     const result = new Set<string>();
 
     // 1) Ordner aus den Elternketten der gesammelten Dateien ableiten.
+    //    (fileRelPaths enthält bereits nur nicht-ignorierte Dateien; ein
+    //    Elternordner einer erlaubten Datei ist bewusst NICHT ignoriert.)
     for (const rel of fileRelPaths) {
       let idx = rel.lastIndexOf("/");
       while (idx > 0) {
@@ -604,7 +616,7 @@ export class SyncEngine {
       if (f.isRoot()) continue;
       if (!this.inScope(f.path)) continue;
       const rel = this.toRelative(f.path, prefix);
-      if (rel) result.add(rel);
+      if (rel && !this.isIgnored(rel)) result.add(rel);
     }
     return result;
   }
@@ -791,6 +803,16 @@ export class SyncEngine {
     const dot = path.lastIndexOf(".");
     const ext = dot === -1 ? "" : path.slice(dot + 1).toLowerCase();
     return allowed.includes(ext);
+  }
+
+  /**
+   * Ist der (sync-relative) Pfad durch ein Ignore-Muster ausgeschlossen? Wird
+   * auf BEIDEN Seiten angewandt (lokal + Drive, Dateien + Ordner), damit eine
+   * ignorierte Datei nicht als „einseitig gelöscht" gilt. Muster sind in
+   * `active.ignorePatterns` bereits vorgeparst.
+   */
+  private isIgnored(path: string): boolean {
+    return isIgnored(path, this.active.ignorePatterns);
   }
 
   /** Ordnerpräfix inkl. abschließendem "/" ("" wenn ganzer Vault). */

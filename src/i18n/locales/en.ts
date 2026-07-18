@@ -72,6 +72,10 @@ export const en = {
   allowedExtensionsDesc:
     "Comma-separated, without the dot (e.g. “md, png, jpg, pdf”). Empty = all file types. Google Docs/Sheets/Slides are always skipped because they cannot be downloaded as binary files.",
   allowedExtensionsPlaceholder: "md, png, jpg, pdf",
+  ignorePatternsName: "Ignore patterns",
+  ignorePatternsDesc:
+    "Comma-separated list of files/folders to exclude from sync. Accepts plain extensions (“tmp”, “.log”) and glob patterns (“*.tmp”, “drafts/*”, “**/node_modules/**”). Paths are relative to the sync folder. Applies to both sides. Empty = ignore nothing.",
+  ignorePatternsPlaceholder: "*.tmp, .DS_Store, drafts/*",
   neverDeleteRemoteName: "Do not delete in Google Drive",
   neverDeleteRemoteDesc:
     "When enabled, a locally deleted file is NOT removed from Google Drive. The file stays in Drive and does not come back locally. Via “Only in Drive” below you can download individual files locally again. Default: off.",

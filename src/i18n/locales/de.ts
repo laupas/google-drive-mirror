@@ -72,6 +72,10 @@ export const de: Partial<Messages> = {
   allowedExtensionsDesc:
     "Kommagetrennt, ohne Punkt (z.B. „md, png, jpg, pdf“). Leer = alle Dateitypen. Google-Docs/Sheets/Slides werden immer übersprungen, da sie nicht als Binärdatei herunterladbar sind.",
   allowedExtensionsPlaceholder: "md, png, jpg, pdf",
+  ignorePatternsName: "Ignorier-Muster",
+  ignorePatternsDesc:
+    "Kommagetrennte Liste von Dateien/Ordnern, die vom Sync ausgeschlossen werden. Erlaubt reine Endungen („tmp“, „.log“) und Glob-Muster („*.tmp“, „drafts/*“, „**/node_modules/**“). Pfade sind relativ zum Sync-Ordner. Gilt für beide Seiten. Leer = nichts ignorieren.",
+  ignorePatternsPlaceholder: "*.tmp, .DS_Store, drafts/*",
   neverDeleteRemoteName: "Do not delete in Google Drive",
   neverDeleteRemoteDesc:
     "Wenn aktiv, wird eine lokal gelöschte Datei NICHT aus Google Drive entfernt. Die Datei bleibt in Drive und kommt lokal nicht zurück. Über „Nur in Drive“ unten kannst du einzelne Dateien wieder lokal herunterladen lassen. Standard: aus.",

@@ -263,6 +263,19 @@ export class SettingsTab extends PluginSettingTab {
           })
       );
 
+    new Setting(containerEl)
+      .setName(t("ignorePatternsName"))
+      .setDesc(t("ignorePatternsDesc"))
+      .addText((c) =>
+        c
+          .setPlaceholder(t("ignorePatternsPlaceholder"))
+          .setValue(s.ignorePatterns)
+          .onChange(async (v) => {
+            s.ignorePatterns = v;
+            await this.plugin.saveSettings();
+          })
+      );
+
     // ---- 2c. Löschverhalten ----
     new Setting(containerEl)
       .setName(t("neverDeleteRemoteName"))

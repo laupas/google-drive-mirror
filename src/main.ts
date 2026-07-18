@@ -9,6 +9,7 @@ import { SyncStatus } from "./sync-status";
 import { DEFAULT_SETTINGS, PluginSettings, SyncStateEntry } from "./types";
 import { log, setDebugLogging } from "./logger";
 import { initLocale, t } from "./i18n";
+import { isIgnored, parseIgnorePatterns } from "./ignore";
 
 /**
  * Einstiegspunkt des Plugins. Verdrahtet OAuth, Drive-Client, Sync-Engine
@@ -334,9 +335,20 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     if (p === ".trash" || p.startsWith(".trash/")) return false;
 
     const f = this.settings.localFolder.trim();
-    if (!f) return true; // ganzer Vault
-    const prefix = normalizePath(f) + "/";
-    return vaultPath === normalizePath(f) || vaultPath.startsWith(prefix);
+    let rel = p;
+    if (f) {
+      const norm = normalizePath(f);
+      const prefix = norm + "/";
+      if (vaultPath !== norm && !vaultPath.startsWith(prefix)) return false;
+      rel = vaultPath === norm ? "" : vaultPath.slice(prefix.length);
+    }
+
+    // Ignore-Muster (Blacklist) auf den sync-relativen Pfad anwenden — analog
+    // zur Engine, damit eine ignorierte Datei keinen Auto-Sync auslöst.
+    const patterns = parseIgnorePatterns(this.settings.ignorePatterns);
+    if (rel && isIgnored(rel, patterns)) return false;
+
+    return true;
   }
 
   private clearTimers(): void {

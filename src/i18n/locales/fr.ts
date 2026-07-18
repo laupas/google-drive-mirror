@@ -74,6 +74,10 @@ export const fr: Partial<Messages> = {
   allowedExtensionsDesc:
     "Séparées par des virgules, sans le point (ex. « md, png, jpg, pdf »). Vide = tous les types de fichiers. Les Google Docs/Sheets/Slides sont toujours ignorés car ils ne peuvent pas être téléchargés comme fichiers binaires.",
   allowedExtensionsPlaceholder: "md, png, jpg, pdf",
+  ignorePatternsName: "Motifs à ignorer",
+  ignorePatternsDesc:
+    "Liste séparée par des virgules de fichiers/dossiers à exclure de la synchronisation. Accepte les extensions simples (« tmp », « .log ») et les motifs glob (« *.tmp », « drafts/* », « **/node_modules/** »). Les chemins sont relatifs au dossier de synchronisation. S'applique aux deux côtés. Vide = ne rien ignorer.",
+  ignorePatternsPlaceholder: "*.tmp, .DS_Store, drafts/*",
   neverDeleteRemoteName: "Ne pas supprimer dans Google Drive",
   neverDeleteRemoteDesc:
     "Si activé, un fichier supprimé localement n'est PAS retiré de Google Drive. Le fichier reste dans Drive et ne revient pas localement. Via « Uniquement dans Drive » ci-dessous, vous pouvez retélécharger des fichiers individuels localement. Par défaut : désactivé.",
