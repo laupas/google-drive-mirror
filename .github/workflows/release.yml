@@ -1,0 +1,50 @@
+name: Release Obsidian plugin
+
+on:
+  push:
+    tags:
+      - "*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+
+      - name: Run tests
+        run: |
+          npm install
+          npm test
+
+      - name: Build plugin
+        run: npm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-build
+          path: .build/
+
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          # Obsidian requires main.js, manifest.json and styles.css alongside
+          # each other; the build assembles them into .build/. Only attach the
+          # files that actually exist (styles.css is optional).
+          assets=()
+          for f in main.js manifest.json styles.css; do
+            [ -f ".build/$f" ] && assets+=(".build/$f")
+          done
+          gh release create "$tag" \
+            --title="$tag" \
+            --draft \
+            "${assets[@]}"

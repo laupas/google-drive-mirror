@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output (esbuild bundle + copied plugin assets)
+.build/
+
+# TypeScript
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment / secrets
+.env
+.env.*

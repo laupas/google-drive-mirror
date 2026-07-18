@@ -1,0 +1,184 @@
+# Google Drive Mirror for Obsidian
+
+Automatic **two-way sync** between your Obsidian vault (whole vault or a single subfolder) and a Google Drive folder. You can edit, add, or delete files in Obsidian **or** directly in Google Drive — both sides are reconciled.
+
+- ✅ Manual sync (ribbon icon + command) **and** automatic sync (upload shortly after a local change + interval polling for Drive)
+- ✅ **Whole vault** or a specific **subfolder** — toggleable
+- ✅ **Recursive:** subfolders are mirrored; even empty folders are synced
+- ✅ Conflict strategy **"newer wins"** (by timestamp); an edit always beats a deletion (no data loss)
+- ✅ **Deletion safety:** only files that provably existed on both sides get deleted. Local deletions go to Obsidian's **`.trash` folder** in the vault, Drive deletions to the **Drive trash** — never permanent
+- ✅ Optional **"Do not delete in Google Drive"** mode: local deletions are never propagated to Drive
+- ✅ **Sync tree** in the settings: browse all synced folders and files; a checkbox per entry shows whether it exists locally, and files kept only in Drive can be restored locally per entry (auto-refreshes after each sync, plus a manual refresh button)
+- ✅ All file types (Markdown, images, PDFs …), optionally narrowed by a **file-extension filter**
+- ✅ Google Docs/Sheets/Slides are skipped automatically (not downloadable as binary files)
+- ✅ **Shared Drives** (Team Drives) are supported — auto-detected when you pick the folder
+- ✅ **Live status bar** + persistent **sync log** (viewable in the log window)
+- 🖥️ Desktop only (uses Node modules for the OAuth loopback and hashing)
+
+---
+
+## 🛑 DANGER — Please read before first use
+
+This plugin can **delete and overwrite files on both sides**. Misuse can cause data loss. Take these precautions seriously:
+
+### 1. ALWAYS create a backup first
+
+Before you run the plugin for the first time (or with a new folder): **back up your vault AND your Google Drive folder.** Two-way sync is powerful, but any sync software can destroy data when misconfigured. The trash (local `.trash`, Drive trash) is a safety net — **not a substitute for a real backup**.
+
+### 2. NEVER copy `sync-state.json` into a new or empty vault
+
+The plugin remembers the last sync state in `sync-state.json` (in the plugin folder). This file belongs **exclusively** to the vault where it was created.
+
+> **If you copy this file into a new/empty vault, the plugin will "believe" that all the files it lists were deleted locally — and propagate those deletions to Google Drive. Your Drive folder would be emptied.**
+
+The plugin protects you as far as it can (the state file is bound to vault name + Drive folder and is discarded on mismatch). **But this protection fails** if the new vault happens to use the same name and the same Drive folder. So don't rely on it:
+
+- **Set up every vault fresh** (install the plugin, sign in, pick the folder) — never copy plugin data around by hand.
+- If you move/duplicate a vault and are unsure: **delete `sync-state.json`** or click **"Reset sync state"** in the settings. The next sync will then reconcile cleanly (download) instead of deleting.
+
+### 3. Test with unimportant data first
+
+For your first run, try the plugin with a **throwaway vault** and a separate Drive folder before pointing it at your real notes.
+
+---
+
+## How it works (overview)
+
+The plugin keeps a **state** (the "base") per file and folder: MD5 hash, timestamps, and — crucial for deletion safety — **which side the file actually existed on at the last sync** (`local`/`remote`). On the next run it compares the current local state, the Drive state, and this base:
+
+- File changed only locally → **upload**
+- File changed only in Drive → **download**
+- File changed on both sides → **conflict** → newer wins
+- File now missing on one side:
+  - …and the base says it was **never** there → it's new → gets **copied**, never deleted
+  - …and the base says it existed on **both** sides → real deletion → propagated to the **trash** (unless the other side changed it, in which case the edit wins)
+
+This "existed-before" proof prevents the classic sync catastrophe where an empty or foreign state wipes the whole Drive folder. On top of that, the base is bound to **vault + Drive folder** — a state file copied from another vault is detected and discarded.
+
+Deleted files are never gone permanently: locally they go to Obsidian's **`.trash` folder** in the vault, in Drive to the **trash**.
+
+The full decision table lives in [`src/reconciler.ts`](src/reconciler.ts) and is covered by unit tests in [`test/unit/`](test/unit/).
+
+**Folder structure:** the folder hierarchy is **mirrored** into Drive — subfolders are created and synced (even empty ones). Additionally, each file's vault-relative path is stored in Drive under `appProperties.obsidianPath` as a fallback.
+
+---
+
+## Setup
+
+### 1. Create a Google Cloud app (one-time)
+
+1. Open the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a new project (or pick an existing one).
+3. **APIs & Services → Library** → search for **"Google Drive API"** → **Enable**.
+4. **APIs & Services → OAuth consent screen**:
+   - Choose user type **"External"**.
+   - Enter app name, support email, and developer contact.
+   - Add your own Google address under **Test users** (while the app is in testing mode this is enough — **no Google verification required**).
+5. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
+   - Application type: **"Desktop app"**.
+   - After creation you receive a **client ID** and **client secret**.
+
+> The loopback redirect (`http://127.0.0.1:<port>`) is automatically allowed for the "Desktop app" type — you don't need to register a redirect URI manually.
+
+### 2. Install the plugin
+
+**Manual (for development/testing):**
+
+```bash
+git clone <this-repo> obsidian-google-drive-mirror
+cd obsidian-google-drive-mirror
+npm install
+npm run build
+```
+
+The build produces a ready-to-install directory `.build/` (`main.js` + `manifest.json` + `styles.css`). Copy its contents into your vault under:
+
+```
+<Vault>/.obsidian/plugins/google-drive-mirror/
+```
+
+Enable the plugin in Obsidian under **Settings → Community plugins**.
+
+### 3. Configure the plugin
+
+In the plugin settings:
+
+1. Enter the **client ID** and **client secret** from step 1.
+2. Click **"Sign in with Google"** → a browser opens → pick your account and grant access. The refresh token is stored automatically.
+3. Choose the **sync scope**: either leave **"Sync entire vault"** enabled (all files except the `.obsidian` config folder), or turn it off — then the **"Local vault folder"** field appears, where you **must** pick a subfolder (e.g. `Notes/Sync`).
+4. Pick the **Google Drive folder**: just **type** in the field — a **suggestion list** of your Drive folders appears (live search). Click a folder, done. Alternatively paste an existing **folder ID** and click **"Verify"**, or use the folder-plus button to create a new "Obsidian" folder.
+   - You can find the folder ID in the folder's URL in Google Drive: `drive.google.com/drive/folders/<THIS-ID>`.
+   - The **Local vault folder** field also shows matching vault folders as suggestions while you type.
+5. Optionally enable **auto-sync** and set the interval. Further options: **file-extension filter**, **"Do not delete in Google Drive"** (see below), **log retention** (hours), and **debug logging**.
+
+### "Do not delete in Google Drive" (optional)
+
+When enabled, deleting a file (or folder) locally will **not** remove it from Google Drive — the Drive copy is kept, and it does **not** come back locally on the next sync. Default: off (a local deletion is propagated to Drive's trash).
+
+### Sync tree
+
+Below the settings you'll find a **sync tree** showing all synced folders and files. Each entry has a checkbox:
+
+- **Checked (and greyed out)** — the entry exists both locally and in Drive (status only, not clickable).
+- **Unchecked** — the entry is kept **only in Drive** (deleted locally but retained via "Do not delete in Google Drive"). **Check it** to restore the file locally on the next sync.
+
+The tree **auto-refreshes after each sync**, and there's a **refresh button** next to the heading for a manual update. The heading also shows how many entries are currently only in Drive.
+
+### 4. Get started
+
+- **Manual:** ribbon icon (🔄), the command "Google Drive Mirror: Sync now", or click the status bar at the bottom.
+- **Automatic:** with auto-sync enabled, local saves are uploaded after a short delay, and Drive is polled at the configured interval.
+- **Status & log:** the status bar at the bottom shows live progress (`⏳ 3/12 …`, `✅`, `⚠️`). Via "Show log" in the settings you see the full, live-updating log.
+
+> If you change the Drive folder or the sync scope, the internal sync history is reset automatically, so the next run reconciles cleanly (instead of deleting).
+
+---
+
+## Development
+
+```bash
+npm install
+npm run dev      # esbuild in watch mode (inline sourcemap)
+npm run build    # typecheck + production build -> main.js
+npm test         # vitest (unit + integration)
+```
+
+Before any change to the sync logic: keep `npm test` green. The core logic (reconciler, deletion safety, folders) is test-covered.
+
+Architecture:
+
+| File | Responsibility |
+|------|----------------|
+| [`src/main.ts`](src/main.ts) | Plugin entry point, commands, vault events, auto-sync timer, status bar |
+| [`src/oauth.ts`](src/oauth.ts) | OAuth loopback flow, token refresh against Google |
+| [`src/drive-client.ts`](src/drive-client.ts) | Google Drive REST API wrapper (list/upload/download/trash, folders, Shared Drives) |
+| [`src/sync-engine.ts`](src/sync-engine.ts) | Orchestration, local hashing, execution of file and folder actions |
+| [`src/reconciler.ts`](src/reconciler.ts) | `reconcile()` (files) + `reconcileFolders()` (folders): diff, conflict and deletion decisions |
+| [`src/sync-state.ts`](src/sync-state.ts) | Persistent sync base (`local`/`remote` flags) in its own file |
+| [`src/sync-status.ts`](src/sync-status.ts) | Live status + persistent log with retention |
+| [`src/storage.ts`](src/storage.ts) | Read/write JSON files in the plugin folder |
+| [`src/settings-tab.ts`](src/settings-tab.ts) | Settings UI, log window |
+| [`src/suggesters.ts`](src/suggesters.ts) | Autocomplete dropdowns for local and Drive folders |
+| [`src/logger.ts`](src/logger.ts) | Central logger (debug logging optional) |
+
+---
+
+## Interrupting a sync
+
+A sync can be interrupted at any time (closing Obsidian, a crash) — **without data loss**:
+
+- Files already transferred are fully present on the other side (every upload is atomic, no half files are created).
+- Progress is checkpointed **every 50 files**, plus once at the end. An interruption therefore costs at most the last few files of repeated work.
+- The **next sync resumes** where it was interrupted, transferring only what's missing — files already present are recognized by content comparison and not transferred again.
+- Note: for very large vaults, the next run still reads and checks **all** local files (needed for reconciliation); this takes time but transfers nothing twice.
+
+## Known limitations / to-dos
+
+- **Renames** are currently handled as delete + re-create (no rename tracking via the Drive ID). Works correctly, but generates unnecessary traffic.
+- **Large files** are transferred via multipart upload in a single request (no resumable upload), and each file is read fully into RAM. For individual very large files (several hundred MB+) this is risky; for many small/medium files it's fine.
+- **No delta/changes API:** Drive is polled via a full listing. For very large folders, the Drive Changes API (`changes.list` with `startPageToken`) would be more efficient.
+- **Conflict strategy** is fixed to "newer wins". A "keep both" option (conflict copy) could be added to the reconciler.
+
+## License
+
+MIT

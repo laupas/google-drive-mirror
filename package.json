@@ -1,0 +1,29 @@
+{
+  "name": "obsidian-google-drive-mirror",
+  "version": "0.1.0",
+  "description": "Automatischer 2-Wege-Sync zwischen einem Obsidian-Vault-Unterordner und einem Google-Drive-Ordner.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "version": "node version-bump.mjs"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "google-drive",
+    "sync"
+  ],
+  "author": "Pascal Lauener",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.20.0",
+    "obsidian": "latest",
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.10"
+  }
+}

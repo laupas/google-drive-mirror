@@ -1,0 +1,10 @@
+{
+  "id": "google-drive-mirror",
+  "name": "Google Drive Mirror",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Two-way sync between a vault folder and a Google Drive folder, with manual and automatic sync. Newer file wins on conflict; deletions go to trash.",
+  "author": "Pascal Lauener",
+  "isDesktopOnly": true,
+  "fundingUrl": "https://buymeacoffee.com/llaaccssaapp"
+}

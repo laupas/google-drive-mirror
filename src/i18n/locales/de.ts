@@ -1,0 +1,231 @@
+/**
+ * Deutsche Übersetzungen. Entspricht dem bisherigen (deutschen) UI-Text des
+ * Plugins. Fehlende Schlüssel fallen automatisch auf Englisch (en.ts) zurück.
+ */
+
+import type { Messages } from "./en";
+
+export const de: Partial<Messages> = {
+  // ---- Commands / Ribbon ----
+  ribbonSyncTooltip: "Google Drive Mirror: Jetzt synchronisieren",
+  commandSyncNow: "Jetzt synchronisieren",
+  commandLogin: "Mit Google anmelden",
+
+  // ---- Statusleiste ----
+  statusBarReady: "Drive: bereit",
+  statusBarRunning: "Drive:{progress} {message}",
+  statusBarRunningProgress: " {current}/{total}",
+  statusBarDone: "Drive: {message}",
+  statusBarError: "Drive: {message}",
+  statusBarTooltip: "Google Drive Mirror — klicken zum Synchronisieren",
+
+  // ---- Notices ----
+  noticeSyncAlreadyRunning: "Google Drive Mirror: Ein Sync läuft bereits…",
+  noticeSignInFirst:
+    "Google Drive Mirror: Bitte zuerst in den Einstellungen anmelden.",
+  noticeLoginSuccess:
+    "Google Drive Mirror: Anmeldung erfolgreich, Token gespeichert.",
+
+  // ---- Einstellungen: Überschriften & Google Cloud ----
+  settingsTitle: "Google Drive Mirror",
+  headingCloudAccess: "1. Google-Cloud-Zugang",
+  cloudHelp:
+    "Lege in der Google Cloud Console eine OAuth-Client-ID vom Typ „Desktop-App“ an, aktiviere die Google Drive API und trage Client-ID und -Secret hier ein. Details in der README.",
+  clientIdName: "Client-ID",
+  clientIdDesc: "OAuth-2.0-Client-ID deiner Google-Cloud-App.",
+  clientSecretName: "Client-Secret",
+  clientSecretDesc: "OAuth-2.0-Client-Secret deiner Google-Cloud-App.",
+  loginName: "Anmeldung",
+  loginDescSignedIn:
+    "✅ Angemeldet. Erneut anmelden, falls der Zugriff widerrufen wurde.",
+  loginDescSignedOut: "Nicht angemeldet.",
+  loginButtonReauth: "Erneut anmelden",
+  loginButtonSignIn: "Mit Google anmelden",
+  loginFailed: "Anmeldung fehlgeschlagen: {error}",
+  logoutTooltip: "Abmelden (Token löschen)",
+
+  // ---- Einstellungen: Ordner ----
+  headingFolders: "2. Ordner",
+  syncWholeVaultName: "Gesamten Vault synchronisieren",
+  syncWholeVaultDesc:
+    "Ein: alle Dateien des Vaults werden synchronisiert (außer dem .obsidian-Konfigurationsordner). Aus: nur ein ausgewählter Unterordner.",
+  localFolderName: "Lokaler Vault-Ordner",
+  localFolderDescSet: "Vault-relativer Unterordner, der synchronisiert wird.",
+  localFolderDescEmpty:
+    "⚠️ Bitte einen Ordner wählen — ohne Auswahl wird nicht synchronisiert.",
+  localFolderPlaceholder: "z.B. Notes/Sync",
+  driveFolderName: "Google-Drive-Ordner",
+  driveFolderDescSet: "Aktuell: „{name}“",
+  driveFolderDescEmpty: "Noch kein Ordner gewählt.",
+  driveFolderPlaceholderReady: "Tippen, um Drive-Ordner zu suchen…",
+  driveFolderPlaceholderNotReady: "Erst anmelden, dann Ordner suchen",
+  driveFolderCheckButton: "Prüfen",
+  sharedDriveSuffix: " (Shared Drive)",
+  driveFolderFound: "Ordner gefunden: „{name}“{location}",
+  driveFolderInvalid: "Ordner ungültig: {error}",
+  driveFolderCreateTooltip: "Neuen Drive-Ordner „Obsidian“ anlegen",
+  driveFolderCreated: "Ordner „{name}“ angelegt.",
+  driveFolderCreateFailed: "Konnte Ordner nicht anlegen: {error}",
+
+  // ---- Einstellungen: Dateifilter & Löschverhalten ----
+  allowedExtensionsName: "Erlaubte Dateiendungen",
+  allowedExtensionsDesc:
+    "Kommagetrennt, ohne Punkt (z.B. „md, png, jpg, pdf“). Leer = alle Dateitypen. Google-Docs/Sheets/Slides werden immer übersprungen, da sie nicht als Binärdatei herunterladbar sind.",
+  allowedExtensionsPlaceholder: "md, png, jpg, pdf",
+  neverDeleteRemoteName: "Do not delete in Google Drive",
+  neverDeleteRemoteDesc:
+    "Wenn aktiv, wird eine lokal gelöschte Datei NICHT aus Google Drive entfernt. Die Datei bleibt in Drive und kommt lokal nicht zurück. Über „Nur in Drive“ unten kannst du einzelne Dateien wieder lokal herunterladen lassen. Standard: aus.",
+
+  // ---- Einstellungen: Auto-Sync ----
+  headingAutoSync: "3. Automatischer Sync",
+  autoSyncEnabledName: "Auto-Sync aktivieren",
+  autoSyncEnabledDesc:
+    "Lädt lokale Änderungen kurz nach dem Speichern hoch und pollt Drive im Intervall.",
+  pollIntervalName: "Drive-Poll-Intervall (Sekunden)",
+  pollIntervalDesc: "Wie oft Drive auf Änderungen geprüft wird (Minimum 15).",
+  localDebounceName: "Verzögerung nach lokaler Änderung (ms)",
+  localDebounceDesc:
+    "Debounce, um schnelle aufeinanderfolgende Speicherungen zu bündeln.",
+  logRetentionName: "Log-Aufbewahrung (Stunden)",
+  logRetentionDesc:
+    "Log-Einträge, die älter sind, werden automatisch gelöscht. 0 = nie automatisch löschen.",
+  debugLoggingName: "Debug-Logging",
+  debugLoggingDesc:
+    "Schreibt ausführliche Info-Meldungen in die Developer-Console. Nur zur Fehlersuche aktivieren.",
+
+  // ---- Einstellungen: Aktionen & Status ----
+  headingActionsStatus: "4. Aktionen & Status",
+  syncNowName: "Jetzt synchronisieren",
+  lastSyncDesc: "Letzter Sync: {time}",
+  neverSyncedDesc: "Noch kein Sync durchgeführt.",
+  syncStartButton: "Sync starten",
+  syncRunningButton: "Sync läuft…",
+  syncLogName: "Sync-Log",
+  syncLogDesc: "Vollständiges, live aktualisiertes Protokoll der Sync-Aktionen.",
+  showLogButton: "Log anzeigen",
+  clearLogTooltip: "Log leeren",
+  resetSyncStateName: "Sync-Zustand zurücksetzen",
+  resetSyncStateDesc:
+    "Löscht die interne Sync-Historie (nicht deine Dateien). Nützlich bei Inkonsistenzen. Beim nächsten Sync werden alle Dateien neu abgeglichen.",
+  resetButton: "Zurücksetzen",
+  resetSyncStateNotice: "Sync-Zustand zurückgesetzt.",
+
+  // ---- Einstellungen: Sync-Baum ----
+  syncTreeName: "Sync-Baum",
+  syncTreeDesc:
+    "Alle synchronisierten Ordner und Dateien. Die Checkbox zeigt, ob ein Eintrag lokal vorhanden ist. Einträge, die nur in Google Drive gehalten werden (lokal gelöscht, aber behalten), sind nicht angehakt — anhaken, um sie beim nächsten Sync wieder lokal herzustellen. Aktuell nur in Drive: {count}.",
+  syncTreeCheckboxTitle: "Häkchen entfernen, um lokal wiederherzustellen",
+  syncTreeCheckboxLocalTitle: "Lokal und in Google Drive vorhanden",
+  syncTreeCheckboxRestoreTitle: "Nur in Google Drive — anhaken, um lokal wiederherzustellen",
+  syncTreeRestored: "„{path}“ wird beim nächsten Sync wieder hergestellt.",
+  syncTreeRefresh: "Baum aktualisieren",
+  syncTreeEmpty: "Noch nichts synchronisiert.",
+
+  // ---- Live-Statuszeile ----
+  statusLineReady: "Bereit.",
+  statusLineRunning: "{message}{progress} · {secs}s",
+  statusLineRunningProgress: " ({current}/{total})",
+  statusLineDone: "{message}",
+  statusLineError: "{message}",
+
+  // ---- Log-Modal ----
+  logModalTitle: "Google Drive Mirror — Log",
+  logModalClearButton: "Log leeren",
+  logModalCount: "{count} Einträge",
+  logModalEmpty: "Noch keine Einträge.",
+
+  // ---- Sync-Status-Defaults ----
+  statusReady: "Bereit",
+  statusSyncStarted: "Sync gestartet…",
+
+  // ---- Sync-Engine: Phasen & Meldungen ----
+  engineNoDriveFolder: "Google Drive Mirror: Kein Drive-Ordner konfiguriert.",
+  engineReadingLocal: "Lese lokale Dateien…",
+  engineFetchingDrive: "Rufe Google Drive ab…",
+  engineDuplicateSameContent:
+    "Mehrere inhaltsgleiche Drive-Dateien „{path}“ — eine gewählt.",
+  engineDuplicateDifferent:
+    "Mehrere unterschiedliche Drive-Dateien mit gleichem Pfad „{path}“ — übersprungen. Bitte in Drive das Duplikat entfernen/umbenennen.",
+  engineDuplicateFolder:
+    "Mehrere Drive-Ordner mit gleichem Pfad „{path}“ — übersprungen. Bitte in Drive das Duplikat entfernen/umbenennen.",
+  engineCountSummary:
+    "{localFiles} lokale · {remoteFiles} Drive-Dateien, {localFolders}/{remoteFolders} Ordner",
+  engineNoChanges: "Keine Änderungen zu übertragen.",
+  engineActionError: "{type} „{path}“: {error}",
+  engineActionProgress: "{action} ({done}/{total})",
+  engineActionDone: "{action} ✓",
+  engineRemoteFolderNotDeleted:
+    "Drive-Ordner „{path}“ nicht gelöscht: enthält noch Dateien (Schutz vor Teilbaum-Verlust).",
+  engineSyncFailed: "Sync fehlgeschlagen: {error}",
+  engineNoticePrefix: "Google Drive Mirror: {message}",
+  engineRemoteFolderCreated: "Drive-Ordner „{path}“ angelegt ✓",
+  engineLocalFolderCreated: "Lokaler Ordner „{path}“ angelegt ✓",
+  engineRemoteFolderDeleted: "Drive-Ordner „{path}“ gelöscht ✓",
+  engineLocalFolderDeleted: "Lokaler Ordner „{path}“ gelöscht ✓",
+  engineFolderKeptRemote: "Ordner lokal gelöscht, in Drive behalten „{path}“",
+
+  // ---- Sync-Engine: Aktionsbeschreibungen ----
+  uploadAction: "Hochladen „{path}“",
+  downloadAction: "Herunterladen „{path}“",
+  deleteLocalAction: "Lokal löschen „{path}“",
+  deleteRemoteAction: "In Drive löschen „{path}“",
+  keepRemoteDropLocalAction: "Lokal gelöscht, in Drive behalten „{path}“",
+  conflictAction: "Konflikt „{path}“ ({winner} gewinnt)",
+  conflictWinnerLocal: "lokal",
+  conflictWinnerRemote: "Drive",
+
+  // ---- Sync-Engine: Ergebniszeile ----
+  summaryUploaded: "{count} hoch",
+  summaryDownloaded: "{count} runter",
+  summaryDeletedRemote: "{count} in Drive gelöscht",
+  summaryDeletedLocal: "{count} lokal gelöscht",
+  summaryConflicts: "{count} Konflikte",
+  summaryNoChanges: "keine Änderungen",
+  summaryDoneWithErrors: "Fertig mit {count} Fehler(n): {head}",
+  summaryDone: "Fertig: {head}",
+
+  // ---- Sync-Engine: finale Notice ----
+  noticeDeletedRemote: "Drive {count}",
+  noticeDeletedLocal: "lokal {count}",
+  noticeErrorMore: "\n…und {count} weitere",
+  noticeErrorTail:
+    "\n⚠ {count} Fehler (Details in der Console):\n{shown}{more}",
+  noticeSummary: "Google Drive Mirror: {head}{errTail}",
+
+  // ---- OAuth-Fehler ----
+  oauthCredentialsMissing:
+    "Client-ID und Client-Secret müssen zuerst in den Einstellungen gesetzt werden.",
+  oauthNoRefreshToken:
+    "Google hat keinen Refresh-Token zurückgegeben. Bitte den App-Zugriff unter https://myaccount.google.com/permissions widerrufen und erneut anmelden (prompt=consent erzwingt einen neuen Refresh-Token).",
+  oauthNotSignedIn:
+    "Google Drive Mirror ist nicht angemeldet (kein Refresh-Token).",
+  oauthTokenRefreshFailed:
+    "Token-Erneuerung fehlgeschlagen ({status}): {text}. Ggf. ist der Refresh-Token abgelaufen — bitte neu anmelden.",
+  oauthPageSuccess: "Anmeldung erfolgreich",
+  oauthPageFailure: "Anmeldung fehlgeschlagen",
+  oauthPageClose:
+    "Du kannst dieses Fenster schließen und zu Obsidian zurückkehren.",
+  oauthError: "OAuth-Fehler: {error}",
+  oauthNoCode: "Kein Auth-Code empfangen.",
+  oauthStateMismatch: "State stimmt nicht überein (CSRF-Schutz).",
+  oauthTimeout: "Zeitüberschreitung bei der Anmeldung (5 Minuten).",
+  oauthCodeExchangeFailed: "Code-Austausch fehlgeschlagen ({status}): {text}",
+
+  // ---- Suggester ----
+  suggestWholeVault: "/ (gesamter Vault)",
+  suggestSharedDriveBadge: "  · Shared Drive",
+
+  // ---- Drive-Client ----
+  driveNotAFolder: "Die angegebene ID ist kein Ordner.",
+  driveApiFailed: "Drive-API \"{action}\" fehlgeschlagen ({status}): {text}",
+  driveActionListFiles: "Dateiliste abrufen",
+  driveActionDownloadFile: "Datei herunterladen",
+  driveActionCreateFile: "Datei erstellen",
+  driveActionSearchSubfolder: "Unterordner suchen",
+  driveActionCreateSubfolder: "Unterordner erstellen",
+  driveActionUpdateFile: "Datei aktualisieren",
+  driveActionTrashFile: "Datei in Papierkorb verschieben",
+  driveActionCheckFolder: "Ordner prüfen",
+  driveActionSearchFolder: "Ordner suchen",
+  driveActionCreateFolder: "Ordner erstellen",
+};
