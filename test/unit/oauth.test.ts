@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { requestUrl } from "obsidian";
-import { OAuthManager } from "../../src/oauth";
+import { OAuthManager, pkceChallenge } from "../../src/oauth";
 import { DEFAULT_SETTINGS, PluginSettings } from "../../src/types";
 
 const mockedRequestUrl = vi.mocked(requestUrl);
@@ -147,6 +147,72 @@ describe("OAuthManager.getAccessToken", () => {
 
     // Act & Assert
     await expect(mgr.getAccessToken()).rejects.toThrow(/Token refresh failed/i);
+  });
+});
+
+describe("pkceChallenge (S256)", () => {
+  it("derives the RFC 7636 reference challenge for the reference verifier", async () => {
+    // Arrange: the verifier + expected challenge from RFC 7636 Appendix B.
+    const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    const expected = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+    // Act
+    const challenge = await pkceChallenge(verifier);
+
+    // Assert: base64url, no padding, matches the reference vector.
+    expect(challenge).toBe(expected);
+  });
+
+  it("produces base64url output (no +, /, or = padding)", async () => {
+    // Act
+    const challenge = await pkceChallenge("some-verifier-value-123456789");
+
+    // Assert
+    expect(challenge).not.toMatch(/[+/=]/);
+  });
+});
+
+describe("OAuthManager token exchange & refresh (PKCE)", () => {
+  /** Parses the x-www-form-urlencoded body of the last requestUrl call. */
+  function lastBody(): URLSearchParams {
+    const call = mockedRequestUrl.mock.calls.at(-1)?.[0] as { body: string };
+    return new URLSearchParams(call.body);
+  }
+
+  it("sends client_secret on refresh when a secret is configured (desktop)", async () => {
+    // Arrange
+    const mgr = new OAuthManager(
+      settings({ clientId: "desktop-id", clientSecret: "sec", refreshToken: "r" })
+    );
+    mockedRequestUrl.mockResolvedValue(
+      tokenResponse({ access_token: "AT", expires_in: 3600 })
+    );
+
+    // Act
+    await mgr.getAccessToken();
+
+    // Assert
+    const body = lastBody();
+    expect(body.get("client_id")).toBe("desktop-id");
+    expect(body.get("client_secret")).toBe("sec");
+    expect(body.get("grant_type")).toBe("refresh_token");
+  });
+
+  it("omits client_secret on refresh when none is configured (mobile PKCE)", async () => {
+    // Arrange: a secret-less client (mobile-style).
+    const mgr = new OAuthManager(
+      settings({ clientId: "id-only", clientSecret: "", refreshToken: "r" })
+    );
+    mockedRequestUrl.mockResolvedValue(
+      tokenResponse({ access_token: "AT", expires_in: 3600 })
+    );
+
+    // Act
+    await mgr.getAccessToken();
+
+    // Assert
+    const body = lastBody();
+    expect(body.has("client_secret")).toBe(false);
   });
 });
 

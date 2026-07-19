@@ -1,5 +1,7 @@
 # Google Drive Mirror for Obsidian
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/llaaccssaapp)
+
 Automatic **two-way sync** between your Obsidian vault (whole vault or a single subfolder) and a Google Drive folder. You can edit, add, or delete files in Obsidian **or** directly in Google Drive — both sides are reconciled.
 
 - ✅ Manual sync (ribbon icon + command) **and** automatic sync (upload shortly after a local change + interval polling for Drive)
@@ -13,7 +15,7 @@ Automatic **two-way sync** between your Obsidian vault (whole vault or a single 
 - ✅ Google Docs/Sheets/Slides are skipped automatically (not downloadable as binary files)
 - ✅ **Shared Drives** (Team Drives) are supported — auto-detected when you pick the folder
 - ✅ **Live status bar** + persistent **sync log** (viewable in the log window)
-- 🖥️ Desktop only (uses Node modules for the OAuth loopback and hashing)
+- 📱 Works on **desktop and mobile**. Desktop signs in via the loopback flow; mobile signs in via an `obsidian://` redirect (see [Mobile setup](#mobile-setup))
 
 ---
 
@@ -67,6 +69,12 @@ The full decision table lives in [`src/reconciler.ts`](src/reconciler.ts) and is
 
 ### 1. Create a Google Cloud app (one-time)
 
+> **New to this / not technical?** Follow the illustrated, plain-language guide
+> instead: **[Step-by-step Google setup](docs/google-cloud-setup.md)** — it
+> walks through both the desktop and the mobile key click by click.
+
+The short version:
+
 1. Open the [Google Cloud Console](https://console.cloud.google.com/).
 2. Create a new project (or pick an existing one).
 3. **APIs & Services → Library** → search for **"Google Drive API"** → **Enable**.
@@ -79,6 +87,8 @@ The full decision table lives in [`src/reconciler.ts`](src/reconciler.ts) and is
    - After creation you receive a **client ID** and **client secret**.
 
 > The loopback redirect (`http://127.0.0.1:<port>`) is automatically allowed for the "Desktop app" type — you don't need to register a redirect URI manually.
+
+> **Using the plugin on mobile too?** See [Mobile setup](#mobile-setup) — mobile needs an additional OAuth client (the Desktop client only works on desktop).
 
 ### 2. Install the plugin
 
@@ -110,6 +120,45 @@ In the plugin settings:
    - You can find the folder ID in the folder's URL in Google Drive: `drive.google.com/drive/folders/<THIS-ID>`.
    - The **Local vault folder** field also shows matching vault folders as suggestions while you type.
 5. Optionally enable **auto-sync** and set the interval. Further options: **file-extension filter**, **"Do not delete in Google Drive"** (see below), **log retention** (hours), and **debug logging**.
+
+### Mobile setup
+
+The plugin runs on Obsidian mobile (iOS/Android) too. Desktop and mobile use
+the **same Google account and the same synced data** — only the sign-in
+mechanism differs, because a phone can't run the desktop loopback server.
+
+> Prefer a click-by-click walkthrough? See **Part B** of the
+> [Step-by-step Google setup](docs/google-cloud-setup.md).
+
+Google won't let one OAuth client accept both the desktop loopback redirect
+(`http://127.0.0.1`) and a mobile app redirect, so **mobile needs its own OAuth
+client** in the same Cloud project:
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/) → **APIs &
+   Services → Credentials → Create credentials → OAuth client ID**.
+2. Application type: **"Android"** or **"iOS"** (either works — this type uses
+   PKCE and has **no client secret**).
+3. Where the client asks for an **authorized redirect URI / custom scheme**,
+   register exactly:
+
+   ```
+   obsidian://gdrive-auth
+   ```
+
+4. Copy the resulting **client ID** into the plugin's **"Mobile client ID"**
+   field (in the same settings section as the desktop client ID). Leave the
+   client secret empty — mobile clients don't have one.
+5. Tap **"Sign in with Google"** on the phone: the consent page opens in the
+   browser, and after granting access it redirects back into Obsidian
+   automatically.
+
+Notes:
+
+- On **desktop**, the "Mobile client ID" field is ignored — desktop keeps using
+  the Desktop client + loopback flow, unchanged.
+- If you only ever use desktop, you can leave "Mobile client ID" empty.
+- The refresh token obtained on one platform works on the other, so you
+  typically sign in once per device.
 
 ### "Do not delete in Google Drive" (optional)
 

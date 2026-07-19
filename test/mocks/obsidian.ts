@@ -28,6 +28,17 @@ export function normalizePath(path: string): string {
 /** Controlled in tests via vi.mocked(requestUrl). */
 export const requestUrl = vi.fn();
 
+/**
+ * Platform flags. Default to desktop; tests that exercise the mobile branch
+ * flip `Platform.isMobileApp` via a spy/assignment.
+ */
+export const Platform = {
+  isDesktop: true,
+  isMobile: false,
+  isDesktopApp: true,
+  isMobileApp: false,
+};
+
 /** UI notice — a no-op in tests, but constructible. */
 export class Notice {
   constructor(public message: string, public timeout?: number) {}

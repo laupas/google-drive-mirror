@@ -56,6 +56,12 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.oauth = new OAuthManager(this.settings);
     this.drive = new GoogleDriveClient(this.oauth);
 
+    // Mobile login redirect: Obsidian delivers obsidian://gdrive-auth back to
+    // the plugin here (mobile can't run the desktop loopback server).
+    this.registerObsidianProtocolHandler("gdrive-auth", (params) => {
+      this.oauth.handleMobileRedirect(params as Record<string, string>);
+    });
+
     this.storage = new PluginStorage(this.app.vault, this.manifest.id);
 
     // Load log from its own file; retention duration from settings.
@@ -300,8 +306,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
   /** Interactive Google login. */
   async login(): Promise<void> {
-    // Explicitly open the system browser (not an Electron popup) so the
-    // loopback redirect reliably lands at the local server.
+    // Open the consent page in the system browser. On desktop this ensures the
+    // loopback redirect lands at the local server (not an Electron popup); on
+    // mobile the browser redirects to obsidian://gdrive-auth back into the app.
     await this.oauth.openLogin((url) => {
       window.open(url, "_blank");
     });

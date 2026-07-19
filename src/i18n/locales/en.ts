@@ -38,6 +38,9 @@ export const en = {
   clientIdDesc: "OAuth 2.0 client ID of your Google Cloud app.",
   clientSecretName: "Client secret",
   clientSecretDesc: "OAuth 2.0 client secret of your Google Cloud app.",
+  mobileClientIdName: "Mobile client ID",
+  mobileClientIdDesc:
+    "Only needed on mobile: OAuth client ID of an “Android/iOS”-type client (no secret). Register “obsidian://gdrive-auth” as its authorized redirect URI. Leave empty on desktop.",
   loginName: "Sign-in",
   loginDescSignedIn: "✅ Signed in. Sign in again if access was revoked.",
   loginDescSignedOut: "Not signed in.",
