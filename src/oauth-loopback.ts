@@ -2,17 +2,21 @@
  * Desktop-only OAuth loopback helper.
  *
  * Runs a one-shot local HTTP server on 127.0.0.1 to catch Google's redirect
- * (the "Desktop app" client flow). Node's `http`/`net` are loaded at RUNTIME via
- * `require()` (not a static `import`), so this module never references a Node
- * built-in on mobile — `oauth.ts` also only loads it lazily inside its desktop
- * branch. The `import type` below is erased at compile time (types only), so it
- * adds no runtime dependency.
+ * (the "Desktop app" client flow). Node's `http`/`net` are loaded via dynamic
+ * `import()` at call time, so there is no static Node import and mobile never
+ * evaluates it — `oauth.ts` additionally only imports this module lazily inside
+ * its desktop branch. The `import("...")` type queries below give full typings
+ * without pulling in a runtime dependency.
  */
 
-import type * as http from "http";
-import type { AddressInfo } from "net";
 import { log } from "./logger";
 import { t } from "./i18n";
+
+/** Node's `http` module type, derived without a static import. */
+type HttpModule = typeof import("http");
+type IncomingMessage = import("http").IncomingMessage;
+type ServerResponse = import("http").ServerResponse;
+type AddressInfo = import("net").AddressInfo;
 
 /** Result of a successful loopback capture. */
 export interface LoopbackResult {
@@ -31,23 +35,23 @@ export interface LoopbackResult {
  * @param buildAuthUrl   Builds the full consent URL for a given redirect_uri.
  * @param openBrowser    Opens the consent URL in the system browser.
  */
-export function awaitLoopbackAuthCode(
+export async function awaitLoopbackAuthCode(
   state: string,
   buildAuthUrl: (redirectUri: string) => string,
   openBrowser: (url: string) => void
 ): Promise<LoopbackResult> {
-  // Load Node built-ins at runtime; this file is only ever imported on desktop.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const httpMod = require("http") as typeof http;
+  // Load Node's http via dynamic import; this file is only ever reached on
+  // desktop (oauth.ts imports it lazily inside its desktop branch).
+  const httpMod: HttpModule = await import("http");
 
-  return new Promise((resolve, reject) => {
+  return new Promise<LoopbackResult>((resolve, reject) => {
     let settled = false;
     // Set in server.listen() and reused in the callback, so that the consent
     // and token-exchange redirect_uri match exactly.
     let redirectUri = "";
 
     const server = httpMod.createServer(
-      (req: http.IncomingMessage, res: http.ServerResponse) => {
+      (req: IncomingMessage, res: ServerResponse) => {
         try {
           const reqUrl = new URL(req.url ?? "", "http://127.0.0.1");
           log.info("HTTP request on loopback:", reqUrl.pathname);

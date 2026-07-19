@@ -1,8 +1,8 @@
 {
   "id": "google-drive-mirror",
   "name": "Google Drive Mirror",
-  "version": "0.1.1",
-  "minAppVersion": "1.4.10",
+  "version": "0.1.2",
+  "minAppVersion": "1.6.6",
   "description": "Sync multiple vault folders to multiple Google Drive folders, including Shared Drives. Each pairing syncs a subfolder or the whole vault two-way, mirrors the folder structure, and picks up files created directly in Drive.",
   "author": "Pascal Lauener",
   "isDesktopOnly": false,
