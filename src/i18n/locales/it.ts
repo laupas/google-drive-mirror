@@ -66,6 +66,8 @@ export const it: Partial<Messages> = {
 
   headingFolders: "2. Cartelle",
   syncWholeVaultName: "Sincronizza l'intero vault",
+  syncWholeVaultLocked:
+    "Solo una destinazione può sincronizzare l'intero vault — “{name}” lo fa già. Scegli una sottocartella per questa destinazione.",
   syncWholeVaultDesc:
     "Attivo: tutti i file del vault vengono sincronizzati (tranne la cartella di configurazione .obsidian). Disattivo: solo una sottocartella selezionata.",
   localFolderName: "Cartella locale del vault",

@@ -68,6 +68,8 @@ export const de: Partial<Messages> = {
   syncWholeVaultName: "Gesamten Vault synchronisieren",
   syncWholeVaultDesc:
     "Ein: alle Dateien des Vaults werden synchronisiert (außer dem .obsidian-Konfigurationsordner). Aus: nur ein ausgewählter Unterordner.",
+  syncWholeVaultLocked:
+    "Nur ein Ziel kann das ganze Vault synchronisieren — „{name}“ tut das bereits. Wähle für dieses Ziel einen Unterordner.",
   localFolderName: "Lokaler Vault-Ordner",
   localFolderDescSet: "Vault-relativer Unterordner, der synchronisiert wird.",
   localFolderDescEmpty:

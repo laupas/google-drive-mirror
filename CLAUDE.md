@@ -127,6 +127,14 @@ sync-state, sync-status, drive-client, oauth, i18n), `test/integration/` (sync-e
   `plugin.setLocalFolderForTarget()`, which **resets that target's sync base** on change
   (analogous to `setDriveFolderForTarget`). `vault.getFiles()` returns only vault files
   anyway (`.obsidian` is never included).
+- **Only ONE whole-vault target:** two whole-vault targets would mirror the same files
+  into two Drives (they can't exclude each other — neither owns a specific subfolder). So
+  `setLocalFolderForTarget(id, "")` is **refused** (returns `false`) if another target is
+  already whole-vault (`plugin.wholeVaultTargetId()`), and the settings UI **disables** the
+  "Sync entire vault" toggle on the other targets (with a hint naming the owner), forcing
+  them to pick a subfolder. A freshly added target defaults to `localFolder === ""` but
+  syncs nothing until a Drive folder is set, and its toggle is locked off when a whole-vault
+  target already exists.
 - **System-path exclusion (`isSystemPath` in sync-engine.ts):** `.obsidian/*`, `.trash/*`,
   and `.DS_Store` are excluded on **both** sides (local collection AND remote import), so
   that a full sync doesn't include the config folder / our own state. `main.isInScope()`

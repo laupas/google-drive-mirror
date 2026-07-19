@@ -69,6 +69,8 @@ export const fr: Partial<Messages> = {
   syncWholeVaultName: "Synchroniser tout le coffre",
   syncWholeVaultDesc:
     "Activé : tous les fichiers du coffre sont synchronisés (sauf le dossier de configuration .obsidian). Désactivé : uniquement un sous-dossier sélectionné.",
+  syncWholeVaultLocked:
+    "Une seule cible peut synchroniser tout le coffre — « {name} » le fait déjà. Choisissez un sous-dossier pour cette cible.",
   localFolderName: "Dossier local du coffre",
   localFolderDescSet: "Sous-dossier relatif au coffre qui est synchronisé.",
   localFolderDescEmpty:

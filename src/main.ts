@@ -383,10 +383,20 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   /**
    * Sets the local sync folder for a target ("" = whole vault). If the scope
    * changes, the target's sync base is reset (analogous to the Drive folder).
+   *
+   * Only ONE target may sync the whole vault (`folder === ""`) — otherwise the
+   * same files would be mirrored into two Drives (whole-vault targets don't
+   * exclude each other, since neither owns a specific subfolder). Setting a
+   * second target to whole-vault is refused and returns false.
    */
-  async setLocalFolderForTarget(id: string, folder: string): Promise<void> {
+  async setLocalFolderForTarget(id: string, folder: string): Promise<boolean> {
     const target = this.settings.targets.find((tg) => tg.id === id);
-    if (!target) return;
+    if (!target) return false;
+    // Guard: reject a second whole-vault target.
+    if (folder === "") {
+      const other = this.wholeVaultTargetId();
+      if (other && other !== id) return false;
+    }
     const changed = target.localFolder !== folder;
     target.localFolder = folder;
     await this.saveSettings();
@@ -394,6 +404,19 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       await this.resetTargetBase(id);
       log.debug("Lokaler Scope gewechselt -> Sync-Base zurückgesetzt.");
     }
+    return true;
+  }
+
+  /**
+   * Id of the target that syncs the whole vault (`localFolder === ""` with a
+   * Drive folder configured), or null. Used to enforce "only one whole-vault
+   * target" in the settings UI.
+   */
+  wholeVaultTargetId(): string | null {
+    const target = this.settings.targets.find(
+      (tg) => tg.localFolder.trim() === ""
+    );
+    return target ? target.id : null;
   }
 
   /** Clears the sync history of one target (not the files) and persists. */

@@ -325,24 +325,40 @@ export class SettingsTab extends PluginSettingTab {
       );
 
     // --- Local scope: whole vault vs. subfolder ---
+    // Only ONE target may sync the whole vault. If another target already does,
+    // this target's toggle is locked off and it must use a subfolder.
+    const wholeVaultOwner = this.plugin.wholeVaultTargetId();
+    const lockedByOther = wholeVaultOwner !== null && wholeVaultOwner !== id;
     const wholeVault =
-      target.localFolder.trim() === "" && !this.pendingSubfolder.has(id);
+      !lockedByOther &&
+      target.localFolder.trim() === "" &&
+      !this.pendingSubfolder.has(id);
 
     new Setting(body)
       .setName(t("syncWholeVaultName"))
-      .setDesc(t("syncWholeVaultDesc"))
-      .addToggle((c) =>
-        c.setValue(wholeVault).onChange(async (v) => {
-          if (v) {
-            this.pendingSubfolder.delete(id);
-            await this.plugin.setLocalFolderForTarget(id, "");
-          } else {
-            this.pendingSubfolder.add(id);
-          }
-          this.display();
-        })
-      );
+      .setDesc(
+        lockedByOther
+          ? t("syncWholeVaultLocked", {
+              name: this.wholeVaultOwnerName(wholeVaultOwner),
+            })
+          : t("syncWholeVaultDesc")
+      )
+      .addToggle((c) => {
+        c.setValue(wholeVault)
+          .setDisabled(lockedByOther)
+          .onChange(async (v) => {
+            if (v) {
+              this.pendingSubfolder.delete(id);
+              await this.plugin.setLocalFolderForTarget(id, "");
+            } else {
+              this.pendingSubfolder.add(id);
+            }
+            this.display();
+          });
+      });
 
+    // Show the folder field whenever this target is not whole-vault (including
+    // when it is locked off by another whole-vault target).
     if (!wholeVault) {
       new Setting(body)
         .setName(t("localFolderName"))
@@ -516,6 +532,12 @@ export class SettingsTab extends PluginSettingTab {
     const treeEl = body.createDiv({ cls: "gds-sync-tree" });
     this.treeEls.set(id, treeEl);
     this.refreshTree(id);
+  }
+
+  /** Display name of the whole-vault owner target (for the locked-toggle hint). */
+  private wholeVaultOwnerName(ownerId: string | null): string {
+    const owner = this.plugin.getTargets().find((tg) => tg.id === ownerId);
+    return owner?.name || owner?.id || "?";
   }
 
   /** Refreshes the sync trees of all targets (after a completed sync). */
