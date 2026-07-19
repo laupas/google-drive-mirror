@@ -1,4 +1,4 @@
-import { Notice, Plugin, TAbstractFile, normalizePath } from "obsidian";
+import { Notice, Platform, Plugin, TAbstractFile, normalizePath } from "obsidian";
 import { GoogleDriveClient } from "./drive-client";
 import { OAuthManager } from "./oauth";
 import { SettingsTab } from "./settings-tab";
@@ -307,12 +307,10 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
   /** Interactive Google login. */
   async login(): Promise<void> {
-    // Open the consent page in the system browser. On desktop this ensures the
+    // Open the consent page in the SYSTEM browser. On desktop this ensures the
     // loopback redirect lands at the local server (not an Electron popup); on
     // mobile the browser redirects to obsidian://gdrive-auth back into the app.
-    await this.oauth.openLogin((url) => {
-      window.open(url, "_blank");
-    });
+    await this.oauth.openLogin((url) => openExternal(url));
     await this.saveSettings();
     log.info(
       "Login abgeschlossen, refreshToken gesetzt:",
@@ -605,6 +603,29 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
   }
+}
+
+/**
+ * Opens an external URL in the SYSTEM browser, cross-platform.
+ *
+ * `window.open(url, "_blank")` opens the system browser on desktop (Electron),
+ * but on mobile (iOS especially) it's a no-op inside Obsidian's WebView, which
+ * left login hanging forever. On mobile we click a real anchor with
+ * `target="_blank"` — Obsidian's mobile shell intercepts that and hands the URL
+ * to the OS browser, from which Google can redirect back via obsidian://.
+ */
+function openExternal(url: string): void {
+  if (Platform.isDesktopApp) {
+    window.open(url, "_blank");
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 /** Generates a short, collision-resistant target id (no crypto dependency). */
