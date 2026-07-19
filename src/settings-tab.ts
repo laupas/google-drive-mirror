@@ -3,6 +3,7 @@ import {
   ButtonComponent,
   Modal,
   Notice,
+  Platform,
   PluginSettingTab,
   Setting,
   normalizePath,
@@ -88,56 +89,63 @@ export class SettingsTab extends PluginSettingTab {
         });
       });
 
-    new Setting(containerEl)
-      .setName(t("mobileClientIdName"))
-      .setDesc(t("mobileClientIdDesc"))
-      .addText((c) =>
-        c
-          .setPlaceholder("....apps.googleusercontent.com")
-          .setValue(s.mobileClientId)
-          .onChange(async (v) => {
-            s.mobileClientId = v.trim();
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName(t("loginName"))
-      .setDesc(
-        s.refreshToken ? t("loginDescSignedIn") : t("loginDescSignedOut")
-      )
-      .addButton((b) =>
-        b
-          .setButtonText(
-            s.refreshToken ? t("loginButtonReauth") : t("loginButtonSignIn")
-          )
-          .setCta()
-          .onClick(async () => {
-            try {
-              await this.plugin.login(); // shows the success notice itself
+    // Interactive sign-in works only on desktop (loopback redirect). On mobile
+    // the button is replaced by the token-import flow below.
+    if (Platform.isDesktopApp) {
+      new Setting(containerEl)
+        .setName(t("loginName"))
+        .setDesc(
+          s.refreshToken ? t("loginDescSignedIn") : t("loginDescSignedOut")
+        )
+        .addButton((b) =>
+          b
+            .setButtonText(
+              s.refreshToken ? t("loginButtonReauth") : t("loginButtonSignIn")
+            )
+            .setCta()
+            .onClick(async () => {
+              try {
+                await this.plugin.login(); // shows the success notice itself
+                this.display();
+              } catch (e) {
+                log.error("Login error:", e);
+                new Notice(
+                  t("loginFailed", {
+                    error: e instanceof Error ? e.message : String(e),
+                  }),
+                  10000
+                );
+              }
+            })
+        )
+        .addExtraButton((b) => {
+          b.setIcon("log-out")
+            .setTooltip(t("logoutTooltip"))
+            .onClick(async () => {
+              this.plugin.oauth.reset();
+              await this.plugin.saveSettings();
               this.display();
-            } catch (e) {
-              log.error("Login-Fehler:", e);
-              new Notice(
-                t("loginFailed", {
-                  error: e instanceof Error ? e.message : String(e),
-                }),
-                10000
-              );
-            }
-          })
-      )
-      .addExtraButton((b) => {
-        b.setIcon("log-out")
-          .setTooltip(t("logoutTooltip"))
-          .onClick(async () => {
-            this.plugin.oauth.reset();
-            await this.plugin.saveSettings();
-            this.display();
-          });
-      });
+            });
+        });
+    } else {
+      // Mobile: show sign-in status + a logout button (import UI is below).
+      new Setting(containerEl)
+        .setName(t("loginName"))
+        .setDesc(
+          s.refreshToken ? t("loginDescSignedIn") : t("loginDescSignedOutMobile")
+        )
+        .addExtraButton((b) => {
+          b.setIcon("log-out")
+            .setTooltip(t("logoutTooltip"))
+            .onClick(async () => {
+              this.plugin.oauth.reset();
+              await this.plugin.saveSettings();
+              this.display();
+            });
+        });
+    }
 
-    this.renderManualLogin(containerEl);
+    this.renderTokenTransfer(containerEl);
 
     // ---- 2. Sync targets ----
     new Setting(containerEl).setName(t("headingTargets")).setHeading();
@@ -302,73 +310,70 @@ export class SettingsTab extends PluginSettingTab {
   }
 
   /**
-   * Manual sign-in fallback (collapsible). For cases where the automatic
-   * browser open / obsidian:// redirect doesn't work (notably some iOS setups):
-   * get the sign-in link, open it in any browser, approve, then paste the code
-   * (or the full redirect URL) back here.
+   * Token transfer (desktop → mobile). Mobile can't run the interactive
+   * redirect flow, so the user signs in on desktop, copies the refresh token
+   * here, and pastes it on mobile.
+   *
+   * - Desktop, signed in: a "Copy sign-in token" button.
+   * - Everywhere: a collapsible "sign in with a token" paste field. On mobile
+   *   it's expanded by default (it's the only way to sign in there).
    */
-  private renderManualLogin(containerEl: HTMLElement): void {
-    const details = containerEl.createEl("details", { cls: "gds-manual-login" });
-    details.createEl("summary", { text: t("manualLoginSummary") });
+  private renderTokenTransfer(containerEl: HTMLElement): void {
+    const signedIn = Boolean(this.plugin.exportRefreshToken());
+
+    // Copy token (only useful on a signed-in desktop, to move to mobile).
+    if (Platform.isDesktopApp && signedIn) {
+      new Setting(containerEl)
+        .setName(t("tokenCopyName"))
+        .setDesc(t("tokenCopyDesc"))
+        .addButton((b) =>
+          b.setButtonText(t("tokenCopyButton")).onClick(async () => {
+            const token = this.plugin.exportRefreshToken();
+            try {
+              await navigator.clipboard.writeText(token);
+              new Notice(t("tokenCopied"), 6000);
+            } catch {
+              // Clipboard unavailable — show it so the user can copy manually.
+              new Notice(t("tokenCopyManual", { token }), 15000);
+            }
+          })
+        );
+    }
+
+    // Import token (the mobile sign-in path; also a desktop fallback).
+    const details = containerEl.createEl("details", {
+      cls: "gds-token-import",
+    });
+    details.open = !Platform.isDesktopApp && !signedIn;
+    details.createEl("summary", { text: t("tokenImportSummary") });
     details.createEl("p", {
       cls: "setting-item-description",
-      text: t("manualLoginHelp"),
+      text: t("tokenImportHelp"),
     });
 
     let pasted = "";
-
-    // Step 1: get + open + copy the sign-in link.
     new Setting(details)
-      .setName(t("manualLoginStep1Name"))
-      .setDesc(t("manualLoginStep1Desc"))
-      .addButton((b) =>
-        b.setButtonText(t("manualLoginGetLinkButton")).onClick(async () => {
-          try {
-            const url = await this.plugin.beginManualLogin();
-            // Best-effort: open it and copy it, so the user has both.
-            window.open(url);
-            try {
-              await navigator.clipboard.writeText(url);
-              new Notice(t("manualLoginLinkCopied"), 6000);
-            } catch {
-              // Clipboard may be unavailable; the opened tab still works.
-            }
-          } catch (e) {
-            new Notice(
-              t("loginFailed", {
-                error: e instanceof Error ? e.message : String(e),
-              }),
-              10000
-            );
-          }
-        })
-      );
-
-    // Step 2: paste the code / redirect URL and complete.
-    new Setting(details)
-      .setName(t("manualLoginStep2Name"))
-      .setDesc(t("manualLoginStep2Desc"))
+      .setName(t("tokenImportName"))
+      .setDesc(t("tokenImportDesc"))
       .addText((c) =>
-        c
-          .setPlaceholder(t("manualLoginCodePlaceholder"))
-          .onChange((v) => {
-            pasted = v.trim();
-          })
+        c.setPlaceholder(t("tokenImportPlaceholder")).onChange((v) => {
+          pasted = v.trim();
+        })
       )
       .addButton((b) =>
         b
-          .setButtonText(t("manualLoginCompleteButton"))
+          .setButtonText(t("tokenImportButton"))
           .setCta()
           .onClick(async () => {
             if (!pasted) {
-              new Notice(t("manualLoginNoInput"), 6000);
+              new Notice(t("tokenImportNoInput"), 6000);
               return;
             }
             try {
-              await this.plugin.completeManualLogin(pasted);
+              await this.plugin.importRefreshToken(pasted);
               this.display();
             } catch (e) {
-              log.error("Manueller Login-Fehler:", e);
+              log.error("Token import error:", e);
               new Notice(
                 t("loginFailed", {
                   error: e instanceof Error ? e.message : String(e),

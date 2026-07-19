@@ -17,9 +17,12 @@ Drive folder, with its own filters and state); one target may be a whole-vault
 sync. Manual and automatic sync. Cross-platform (desktop + mobile,
 `manifest.json: isDesktopOnly: false`). The only Node-only code is the OAuth
 loopback server (`http`/`net` in `oauth-loopback.ts`), lazy-imported on desktop
-so mobile never loads it; mobile authenticates via an `obsidian://` protocol
-redirect instead. Hashing uses a pure-JS MD5 (`md5.ts`) and PKCE uses WebCrypto
-(`crypto.subtle`), both available on mobile.
+so mobile never loads it. **Interactive sign-in is desktop-only** (loopback +
+PKCE); Google offers no working redirect for an Obsidian plugin on mobile (OOB
+removed, `obsidian://` rejected by every client type, no loopback on a phone),
+so **mobile signs in by importing a refresh token exported from desktop**
+(`exportRefreshToken`/`importRefreshToken`). Hashing uses a pure-JS MD5
+(`md5.ts`); PKCE uses WebCrypto (`crypto.subtle`).
 
 > 🛑 **Data-loss risk (core constraint):** The plugin deletes/overwrites on both sides.
 > The most dangerous class of bugs is "deletion propagated incorrectly". The only
@@ -65,7 +68,7 @@ Data flow: `main.ts` wires everything up → `SyncEngine` orchestrates a run →
 | File | Role |
 |------|------|
 | `main.ts` | Plugin entry point. Holds one `SyncEngine`+`SyncStateStore` PER target (`runtimes` map, rebuilt on target changes), runs targets sequentially in `runSync()`, target CRUD (`addTarget`/`removeTarget`/`updateTarget`/`setDriveFolderForTarget`/`setLocalFolderForTarget`). Commands, ribbon, vault events (debounced upload), poll timer, login. |
-| `oauth.ts` | OAuth 2.0 with **PKCE** on both platforms. Desktop: **loopback flow** (Desktop app) — lazy-loads `oauth-loopback.ts` (the Node `http`/`net` server on `127.0.0.1:<port>` that catches the redirect). Mobile: **`obsidian://gdrive-auth`** redirect delivered via `registerObsidianProtocolHandler` (wired in `main.ts`) → `handleMobileRedirect()`. `effectiveClientId()` picks `settings.mobileClientId` on mobile (iOS/Android client, no secret) else `settings.clientId`. Token refresh directly against Google; `client_secret` sent only when present. |
+| `oauth.ts` | OAuth 2.0 (Desktop-app client, with secret), **PKCE**. `openLogin()` = **desktop-only** loopback flow (lazy-loads `oauth-loopback.ts`, the Node `http`/`net` server on `127.0.0.1:<port>`). Mobile has no interactive flow: `exportRefreshToken()` returns the token to copy, `importRefreshToken()` validates a pasted token against Google (rolls back on failure). Token refresh + code exchange always send `client_secret`. |
 | `oauth-loopback.ts` | Desktop-only loopback server (`awaitLoopbackAuthCode`, async). Loads Node `http` via dynamic `await import("http")` **guarded by `Platform.isDesktop`** (throws `oauthLoopbackDesktopOnly` otherwise) — no static Node `import`, no `require`. Types come from **minimal local interfaces** (`NodeHttpModule`/`NodeServer`/…), NOT `@types/node`: the Obsidian lint config treats Node types as unavailable, so any `import("http")` type query degrades to `any` and trips `no-unsafe-*`. It is **also** only imported via dynamic `import()` from `oauth.ts`'s desktop branch. esbuild keeps `import("http")` external. |
 | `md5.ts` | Pure-JS MD5 (`md5Hex(ArrayBuffer)`) replacing Node `crypto` — works on mobile. Output byte-identical to Node's, guarded by known-vector tests. |
 | `drive-client.ts` | Google Drive REST API v3 (list/download/upload/trash/search/folder). |
@@ -88,15 +91,19 @@ sync-state, sync-status, drive-client, oauth, i18n), `test/integration/` (sync-e
 ## Central design decisions (not obvious from the code)
 
 - **Auth:** Each user creates their **own Google Cloud app** (client ID/secret stored
-  locally in the settings). No proxy server. On **desktop** the OAuth client type must be
-  **"Desktop app"** so the loopback redirect works without a registered redirect URI.
-  On **mobile** (no loopback possible) the user additionally creates an **"Android/iOS"**
-  client (PKCE, no secret) with `obsidian://gdrive-auth` registered as the redirect URI,
-  and enters its ID as `settings.mobileClientId` (`MOBILE_REDIRECT_URI` in `types.ts`).
-  Deliberately kept user-owned + no backend + no Google verification/CASA audit — the
-  price is per-platform client setup. Scope is the full **`drive`** (`OAUTH_SCOPE` in
-  `types.ts`) — deliberately not `drive.file`, so that files created manually in Drive are
-  also visible.
+  locally in the settings), OAuth client type **"Desktop app"** so the loopback redirect
+  works without a registered redirect URI. No proxy server. **Interactive sign-in is
+  desktop-only.** Mobile cannot receive an OAuth redirect at all: Google removed the OOB
+  copy-paste flow (Jan 2023), rejects custom `obsidian://` schemes for every client type
+  (Web clients require a public-TLD https redirect; iOS/Android clients have no redirect
+  field and Obsidian's `registerObsidianProtocolHandler` only binds `obsidian://`, not
+  Google's reverse-client-id scheme), and a phone can't run the loopback server. So on
+  mobile the user signs in on desktop, **copies the refresh token** (Copy sign-in token),
+  and **pastes it on mobile** (`importRefreshToken`, validated against Google). The token
+  is account-level; both platforms use the same client id/secret. This preserves
+  user-owned + no backend + no Google verification/CASA audit, with **no hosted bounce
+  page**. Scope is the full **`drive`** (`OAUTH_SCOPE` in `types.ts`) — deliberately not
+  `drive.file`, so that files created manually in Drive are also visible.
 - **Shared Drives (Team Drives):** Supported. All Drive calls set `supportsAllDrives=true`
   (constant `SUPPORTS_ALL_DRIVES` in `drive-client.ts`; harmless on My Drive).
   `getFolder`/`searchFolders` return the `driveId`; if the root folder lives in a Shared

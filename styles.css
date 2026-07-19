@@ -193,14 +193,14 @@
   color: var(--text-accent);
 }
 
-/* Manual sign-in fallback: a discreet, collapsible block. */
-.gds-manual-login {
+/* Token import (desktop → mobile sign-in): a discreet, collapsible block. */
+.gds-token-import {
   margin: 0.5rem 0 1rem;
   padding: 0.25rem 0.75rem;
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
 }
-.gds-manual-login > summary {
+.gds-token-import > summary {
   cursor: pointer;
   color: var(--text-muted);
   font-size: var(--font-ui-small);

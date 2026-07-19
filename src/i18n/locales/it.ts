@@ -37,33 +37,32 @@ export const it: Partial<Messages> = {
   clientIdDesc: "ID client OAuth 2.0 della tua app Google Cloud.",
   clientSecretName: "Client secret",
   clientSecretDesc: "Client secret OAuth 2.0 della tua app Google Cloud.",
-  mobileClientIdName: "Client ID mobile",
-  mobileClientIdDesc:
-    "Necessario solo su dispositivi mobili: client ID OAuth di un client di tipo “Android/iOS” (senza secret). Registra “obsidian://gdrive-auth” come URI di reindirizzamento autorizzato. Lascia vuoto su desktop.",
   loginName: "Accesso",
   loginDescSignedIn:
     "✅ Connesso. Accedi di nuovo se l'accesso è stato revocato.",
   loginDescSignedOut: "Non connesso.",
+  loginDescSignedOutMobile:
+    "Non connesso. Accedi prima su desktop, poi copia lì il token e incollalo qui sotto.",
   loginButtonReauth: "Accedi di nuovo",
   loginButtonSignIn: "Accedi con Google",
   loginFailed: "Accesso non riuscito: {error}",
   logoutTooltip: "Disconnetti (elimina token)",
-  manualLoginSummary:
-    "Accesso manuale (se il pulsante sopra non apre un browser)",
-  manualLoginHelp:
-    "Usalo se toccando “Accedi con Google” non si apre un browser (su alcuni dispositivi mobili). Esegui i due passaggi qui sotto.",
-  manualLoginStep1Name: "1. Ottieni il link di accesso",
-  manualLoginStep1Desc:
-    "Apre la pagina di consenso di Google e copia il link negli appunti. Accedi lì e concedi l'accesso.",
-  manualLoginGetLinkButton: "Ottieni link di accesso",
-  manualLoginLinkCopied:
-    "Link di accesso copiato. Aprilo in un browser e concedi l'accesso.",
-  manualLoginStep2Name: "2. Incolla il risultato",
-  manualLoginStep2Desc:
-    "Dopo l'approvazione arriverai su una pagina “obsidian://…” (potrebbe dire che non può aprirla). Copia l'intero indirizzo — o solo il codice — e incollalo qui.",
-  manualLoginCodePlaceholder: "obsidian://gdrive-auth?code=… o solo il codice",
-  manualLoginCompleteButton: "Completa l'accesso",
-  manualLoginNoInput: "Incolla prima il codice o l'URL di reindirizzamento.",
+  tokenCopyName: "Copia il token di accesso (per il mobile)",
+  tokenCopyDesc:
+    "Copia il tuo token di accesso per incollarlo in Obsidian sul telefono o tablet, dove non è possibile accedere direttamente.",
+  tokenCopyButton: "Copia token di accesso",
+  tokenCopied:
+    "Token di accesso copiato. Incollalo in Obsidian sull'altro dispositivo.",
+  tokenCopyManual: "Copia questo token di accesso: {token}",
+  tokenImportSummary: "Accedi con un token da un altro dispositivo",
+  tokenImportHelp:
+    "Su mobile non puoi accedere direttamente. Accedi su desktop, tocca lì “Copia token di accesso”, poi incollalo qui.",
+  tokenImportName: "Token di accesso",
+  tokenImportDesc:
+    "Incolla il token copiato da un desktop connesso. Richiede lo stesso client ID e secret qui sopra.",
+  tokenImportPlaceholder: "Incolla il token di accesso",
+  tokenImportButton: "Accedi con il token",
+  tokenImportNoInput: "Incolla prima il token di accesso.",
 
   // ---- Impostazioni: cartelle ----
   // ---- Impostazioni: destinazioni di sincronizzazione ----
@@ -261,8 +260,7 @@ export const it: Partial<Messages> = {
   oauthCodeExchangeFailed: "Scambio del codice non riuscito ({status}): {text}",
   oauthLoopbackDesktopOnly:
     "L'accesso tramite loopback è disponibile solo su desktop.",
-  oauthManualNoPending:
-    "Nessun accesso manuale in corso. Ottieni prima il link di accesso.",
+  oauthImportEmpty: "Nessun token inserito.",
 
   // ---- Suggeritori ----
   suggestWholeVault: "/ (intero vault)",

@@ -37,33 +37,32 @@ export const de: Partial<Messages> = {
   clientIdDesc: "OAuth-2.0-Client-ID deiner Google-Cloud-App.",
   clientSecretName: "Client-Secret",
   clientSecretDesc: "OAuth-2.0-Client-Secret deiner Google-Cloud-App.",
-  mobileClientIdName: "Mobile-Client-ID",
-  mobileClientIdDesc:
-    "Nur für Mobilgeräte nötig: OAuth-Client-ID eines Clients vom Typ „Android/iOS“ (ohne Secret). Trage „obsidian://gdrive-auth“ als autorisierte Weiterleitungs-URI ein. Am Desktop leer lassen.",
   loginName: "Anmeldung",
   loginDescSignedIn:
     "✅ Angemeldet. Erneut anmelden, falls der Zugriff widerrufen wurde.",
   loginDescSignedOut: "Nicht angemeldet.",
+  loginDescSignedOutMobile:
+    "Nicht angemeldet. Melde dich zuerst am Desktop an, kopiere dort den Token und füge ihn unten ein.",
   loginButtonReauth: "Erneut anmelden",
   loginButtonSignIn: "Mit Google anmelden",
   loginFailed: "Anmeldung fehlgeschlagen: {error}",
   logoutTooltip: "Abmelden (Token löschen)",
-  manualLoginSummary:
-    "Manuelle Anmeldung (falls die Schaltfläche oben keinen Browser öffnet)",
-  manualLoginHelp:
-    "Nutze dies, wenn „Mit Google anmelden“ keinen Browser öffnet (bei manchen Mobilgeräten). Führe die beiden Schritte unten aus.",
-  manualLoginStep1Name: "1. Anmelde-Link holen",
-  manualLoginStep1Desc:
-    "Öffnet die Google-Zustimmungsseite und kopiert den Link in die Zwischenablage. Melde dich dort an und erteile den Zugriff.",
-  manualLoginGetLinkButton: "Anmelde-Link holen",
-  manualLoginLinkCopied:
-    "Anmelde-Link kopiert. Öffne ihn im Browser und bestätige den Zugriff.",
-  manualLoginStep2Name: "2. Ergebnis einfügen",
-  manualLoginStep2Desc:
-    "Nach der Bestätigung landest du auf einer „obsidian://…“-Seite (evtl. mit Fehler beim Öffnen). Kopiere die ganze Adresse — oder nur den Code — und füge sie hier ein.",
-  manualLoginCodePlaceholder: "obsidian://gdrive-auth?code=… oder nur der Code",
-  manualLoginCompleteButton: "Anmeldung abschließen",
-  manualLoginNoInput: "Füge zuerst den Code oder die Weiterleitungs-URL ein.",
+  tokenCopyName: "Anmelde-Token kopieren (für Mobilgeräte)",
+  tokenCopyDesc:
+    "Kopiert deinen Anmelde-Token, damit du ihn in Obsidian auf dem Handy oder Tablet einfügen kannst — dort ist keine direkte Anmeldung möglich.",
+  tokenCopyButton: "Anmelde-Token kopieren",
+  tokenCopied:
+    "Anmelde-Token kopiert. Füge ihn in Obsidian auf deinem anderen Gerät ein.",
+  tokenCopyManual: "Kopiere diesen Anmelde-Token: {token}",
+  tokenImportSummary: "Mit einem Token von einem anderen Gerät anmelden",
+  tokenImportHelp:
+    "Auf Mobilgeräten ist keine direkte Anmeldung möglich. Melde dich am Desktop an, tippe dort auf „Anmelde-Token kopieren“ und füge ihn hier ein.",
+  tokenImportName: "Anmelde-Token",
+  tokenImportDesc:
+    "Füge den Token ein, den du von einem angemeldeten Desktop kopiert hast. Erfordert dieselbe Client-ID und dasselbe Secret oben.",
+  tokenImportPlaceholder: "Anmelde-Token einfügen",
+  tokenImportButton: "Mit Token anmelden",
+  tokenImportNoInput: "Füge zuerst den Anmelde-Token ein.",
 
   // ---- Einstellungen: Sync-Ziele ----
   headingTargets: "2. Sync-Ziele",
@@ -256,8 +255,7 @@ export const de: Partial<Messages> = {
   oauthCodeExchangeFailed: "Code-Austausch fehlgeschlagen ({status}): {text}",
   oauthLoopbackDesktopOnly:
     "Die Loopback-Anmeldung ist nur am Desktop verfügbar.",
-  oauthManualNoPending:
-    "Keine manuelle Anmeldung aktiv. Hole zuerst den Anmelde-Link.",
+  oauthImportEmpty: "Kein Token eingegeben.",
 
   // ---- Suggester ----
   suggestWholeVault: "/ (gesamter Vault)",

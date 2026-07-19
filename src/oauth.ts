@@ -1,38 +1,33 @@
-import { Platform, requestUrl } from "obsidian";
-import { MOBILE_REDIRECT_URI, OAUTH_SCOPE, PluginSettings } from "./types";
+import { requestUrl } from "obsidian";
+import { OAUTH_SCOPE, PluginSettings } from "./types";
 import { log } from "./logger";
 import { t } from "./i18n";
 
-const GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 
 /**
  * Manages the OAuth 2.0 flow against Google for a Cloud app created by the
- * user themselves. Cross-platform (desktop + mobile), with PKCE on both:
+ * user themselves ("Desktop app" client, with secret).
  *
- * - Desktop ("Desktop app" client, with secret): loopback flow. A local HTTP
- *   server on 127.0.0.1 catches the redirect. The Node-only server lives in
- *   `oauth-loopback.ts` and is imported LAZILY so mobile never loads `http`.
- * - Mobile (iOS/Android client, no secret): the consent page redirects to
- *   `obsidian://gdrive-auth`, which Obsidian delivers back to the plugin via a
- *   protocol handler; `main.ts` forwards it to `handleMobileRedirect()`.
+ * - Interactive sign-in (DESKTOP ONLY): `openLogin()` runs the loopback flow
+ *   with PKCE. A local HTTP server on 127.0.0.1 catches the redirect. The
+ *   Node-only server lives in `oauth-loopback.ts` and is imported LAZILY, so a
+ *   mobile bundle never touches `http`/`net`.
+ * - MOBILE has no way to receive an OAuth redirect (Google removed the OOB
+ *   copy-paste flow, rejects custom `obsidian://` schemes for every client
+ *   type, and there is no loopback server on a phone). So mobile does NOT sign
+ *   in interactively. Instead the user signs in on desktop, copies the
+ *   resulting refresh token (`exportRefreshToken()`), and pastes it on mobile
+ *   (`importRefreshToken()`). The token is account-level and works on any
+ *   device with the same client id/secret.
  *
- * Both paths use PKCE (code_verifier/code_challenge), so no secret is required
- * for the code exchange — the client secret is only sent when present.
- * getAccessToken() exchanges the stored refresh token for a short-lived access
- * token (with in-memory cache).
+ * `getAccessToken()` exchanges the stored refresh token for a short-lived
+ * access token (with in-memory cache) — this works on every platform.
  */
 export class OAuthManager {
   private settings: PluginSettings;
   private cachedAccessToken: string | null = null;
   private cachedTokenExpiryMs = 0;
-
-  /** Pending mobile login awaiting the obsidian:// redirect, if any. */
-  private pendingMobile: {
-    state: string;
-    resolve: (v: { code: string }) => void;
-    reject: (e: Error) => void;
-  } | null = null;
 
   constructor(settings: PluginSettings) {
     this.settings = settings;
@@ -40,17 +35,18 @@ export class OAuthManager {
 
   /** Is enough configured to fetch tokens? */
   isConfigured(): boolean {
-    return Boolean(this.effectiveClientId() && this.settings.refreshToken);
+    return Boolean(this.settings.clientId && this.settings.refreshToken);
   }
 
   /**
-   * Starts the interactive login. Opens the system browser and waits for the
-   * redirect (loopback on desktop, obsidian:// on mobile). Stores the refresh
-   * token in the settings (the caller must subsequently call saveSettings()).
+   * Interactive sign-in (desktop loopback + PKCE). Opens the system browser and
+   * waits for the redirect, then exchanges the code for tokens. Stores the
+   * refresh token in the settings (the caller must subsequently call
+   * saveSettings()).
    */
   async openLogin(openBrowser: (url: string) => void): Promise<void> {
-    const clientId = this.effectiveClientId();
-    if (!clientId) {
+    const clientId = this.settings.clientId;
+    if (!clientId || !this.settings.clientSecret) {
       throw new Error(t("oauthCredentialsMissing"));
     }
 
@@ -58,26 +54,23 @@ export class OAuthManager {
     const codeVerifier = randomVerifier();
     const codeChallenge = await pkceChallenge(codeVerifier);
 
-    log.info("Login gestartet, warte auf Redirect…");
-    const { code, redirectUri } = Platform.isMobileApp
-      ? await this.awaitMobileAuthCode(clientId, state, codeChallenge, openBrowser)
-      : await this.awaitLoopbackAuthCode(clientId, state, codeChallenge, openBrowser);
-
-    log.info(
-      "Auth-Code empfangen, tausche gegen Token (redirect_uri=" +
-        redirectUri +
-        ")"
+    log.info("Login started, waiting for redirect…");
+    const { awaitLoopbackAuthCode } = await import("./oauth-loopback");
+    const { code, redirectUri } = await awaitLoopbackAuthCode(
+      state,
+      (redirect) =>
+        buildAuthUrl(clientId, redirect, state, codeChallenge),
+      openBrowser
     );
+
+    log.info("Auth code received, exchanging for token (redirect_uri=" + redirectUri + ")");
     const tokenResp = await this.exchangeCodeForTokens(
       code,
       redirectUri,
       clientId,
       codeVerifier
     );
-    log.info(
-      "Token-Antwort erhalten. refresh_token vorhanden:",
-      Boolean(tokenResp.refresh_token)
-    );
+    log.info("Token response received. refresh_token present:", Boolean(tokenResp.refresh_token));
 
     if (!tokenResp.refresh_token) {
       throw new Error(t("oauthNoRefreshToken"));
@@ -88,89 +81,40 @@ export class OAuthManager {
     this.cachedTokenExpiryMs = Date.now() + (tokenResp.expires_in - 60) * 1000;
   }
 
-  /**
-   * Called by the obsidian:// protocol handler (wired in main.ts) with the
-   * query params of the redirect. Forwards the auth code to the pending mobile
-   * login, if one is waiting.
-   */
-  handleMobileRedirect(params: Record<string, string>): void {
-    const pending = this.pendingMobile;
-    if (!pending) return; // no login in progress — ignore stray callbacks
-    this.pendingMobile = null;
+  // ---------- Token export / import (desktop → mobile) ----------
 
-    if (params.error) {
-      pending.reject(new Error(t("oauthError", { error: params.error })));
-      return;
-    }
-    if (params.state !== pending.state) {
-      pending.reject(new Error(t("oauthStateMismatch")));
-      return;
-    }
-    if (!params.code) {
-      pending.reject(new Error(t("oauthNoCode")));
-      return;
-    }
-    pending.resolve({ code: params.code });
+  /** The current refresh token, for copying to another device. Empty if none. */
+  exportRefreshToken(): string {
+    return this.settings.refreshToken;
   }
 
-  // ---------- Manual (paste-code) fallback ----------
-  //
-  // If the automatic browser open / obsidian:// redirect fails on mobile, the
-  // user can do the flow by hand: get the URL, open it in any browser, approve,
-  // then paste back the code (or the full redirect URL). We stash the PKCE
-  // verifier + state between the two calls.
-
-  private pendingManual: { state: string; codeVerifier: string } | null = null;
-
   /**
-   * Step 1 of the manual flow: builds the consent URL and remembers the PKCE
-   * verifier/state for step 2. Returns the URL to open in a browser.
+   * Imports a refresh token pasted from another (signed-in) device and verifies
+   * it by fetching an access token. Requires client id + secret to be set.
+   * Caller must saveSettings() afterwards. Throws on an invalid token.
    */
-  async beginManualLogin(): Promise<string> {
-    const clientId = this.effectiveClientId();
-    if (!clientId) {
+  async importRefreshToken(token: string): Promise<void> {
+    const trimmed = token.trim();
+    if (!trimmed) {
+      throw new Error(t("oauthImportEmpty"));
+    }
+    if (!this.settings.clientId || !this.settings.clientSecret) {
       throw new Error(t("oauthCredentialsMissing"));
     }
-    const state = randomToken();
-    const codeVerifier = randomVerifier();
-    const codeChallenge = await pkceChallenge(codeVerifier);
-    this.pendingManual = { state, codeVerifier };
-    return this.buildAuthUrl(clientId, MOBILE_REDIRECT_URI, state, codeChallenge);
-  }
-
-  /**
-   * Step 2 of the manual flow: the user pastes either the bare authorization
-   * code or the full `obsidian://gdrive-auth?...` redirect URL. Exchanges it for
-   * tokens using the verifier from step 1. Caller must saveSettings() after.
-   */
-  async completeManualLogin(pasted: string): Promise<void> {
-    const pending = this.pendingManual;
-    if (!pending) {
-      throw new Error(t("oauthManualNoPending"));
+    // Stage into settings so refreshAccessToken() can use it, but roll back if
+    // the token turns out to be invalid.
+    const previous = this.settings.refreshToken;
+    this.settings.refreshToken = trimmed;
+    this.cachedAccessToken = null;
+    this.cachedTokenExpiryMs = 0;
+    try {
+      await this.refreshAccessToken();
+    } catch (e) {
+      this.settings.refreshToken = previous;
+      this.cachedAccessToken = null;
+      this.cachedTokenExpiryMs = 0;
+      throw e;
     }
-    const { code, state } = extractCodeAndState(pasted);
-    if (!code) {
-      throw new Error(t("oauthNoCode"));
-    }
-    // If a state came back with the URL, it must match; a bare code has none.
-    if (state && state !== pending.state) {
-      throw new Error(t("oauthStateMismatch"));
-    }
-
-    const tokenResp = await this.exchangeCodeForTokens(
-      code,
-      MOBILE_REDIRECT_URI,
-      this.effectiveClientId(),
-      pending.codeVerifier
-    );
-    this.pendingManual = null;
-
-    if (!tokenResp.refresh_token) {
-      throw new Error(t("oauthNoRefreshToken"));
-    }
-    this.settings.refreshToken = tokenResp.refresh_token;
-    this.cachedAccessToken = tokenResp.access_token;
-    this.cachedTokenExpiryMs = Date.now() + (tokenResp.expires_in - 60) * 1000;
   }
 
   /**
@@ -190,16 +134,12 @@ export class OAuthManager {
 
   /** Forces a token renewal. */
   private async refreshAccessToken(): Promise<string> {
-    const params: Record<string, string> = {
-      client_id: this.effectiveClientId(),
+    const body = new URLSearchParams({
+      client_id: this.settings.clientId,
+      client_secret: this.settings.clientSecret,
       refresh_token: this.settings.refreshToken,
       grant_type: "refresh_token",
-    };
-    // Only "Desktop app" clients carry a secret; mobile (PKCE) clients don't.
-    if (this.settings.clientSecret) {
-      params.client_secret = this.settings.clientSecret;
-    }
-    const body = new URLSearchParams(params);
+    });
 
     const resp = await requestUrl({
       url: GOOGLE_TOKEN_ENDPOINT,
@@ -228,123 +168,20 @@ export class OAuthManager {
     this.cachedTokenExpiryMs = 0;
   }
 
-  /**
-   * The client ID to use for the current platform: the mobile client ID on
-   * mobile when set, otherwise the desktop clientId. (A PKCE mobile client
-   * needs no secret, so the desktop clientId also works on mobile if the user
-   * registered obsidian:// on it — but Google's Desktop client type won't
-   * accept that redirect, hence the dedicated mobileClientId.)
-   */
-  private effectiveClientId(): string {
-    if (Platform.isMobileApp && this.settings.mobileClientId) {
-      return this.settings.mobileClientId;
-    }
-    return this.settings.clientId;
-  }
-
-  /** Builds the Google consent URL for a given redirect_uri (with PKCE). */
-  private buildAuthUrl(
-    clientId: string,
-    redirectUri: string,
-    state: string,
-    codeChallenge: string
-  ): string {
-    return (
-      GOOGLE_AUTH_ENDPOINT +
-      "?" +
-      new URLSearchParams({
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        response_type: "code",
-        scope: OAUTH_SCOPE,
-        access_type: "offline",
-        prompt: "consent", // forces a refresh token even on repeated login
-        code_challenge: codeChallenge,
-        code_challenge_method: "S256",
-        state,
-      }).toString()
-    );
-  }
-
-  /**
-   * Desktop: run the loopback server (lazy-loaded so `http`/`net` are never
-   * imported on mobile) and wait for the redirect.
-   */
-  private async awaitLoopbackAuthCode(
-    clientId: string,
-    state: string,
-    codeChallenge: string,
-    openBrowser: (url: string) => void
-  ): Promise<{ code: string; redirectUri: string }> {
-    const { awaitLoopbackAuthCode } = await import("./oauth-loopback");
-    return awaitLoopbackAuthCode(
-      state,
-      (redirectUri) =>
-        this.buildAuthUrl(clientId, redirectUri, state, codeChallenge),
-      openBrowser
-    );
-  }
-
-  /**
-   * Mobile: open the consent page (system browser) and wait for the
-   * obsidian:// redirect to be delivered via handleMobileRedirect().
-   */
-  private awaitMobileAuthCode(
-    clientId: string,
-    state: string,
-    codeChallenge: string,
-    openBrowser: (url: string) => void
-  ): Promise<{ code: string; redirectUri: string }> {
-    return new Promise((resolve, reject) => {
-      // Abandon any earlier, unfinished attempt.
-      if (this.pendingMobile) {
-        this.pendingMobile.reject(new Error(t("oauthTimeout")));
-      }
-
-      const timeout = window.setTimeout(() => {
-        if (this.pendingMobile?.state === state) {
-          this.pendingMobile = null;
-          reject(new Error(t("oauthTimeout")));
-        }
-      }, 5 * 60 * 1000);
-
-      this.pendingMobile = {
-        state,
-        resolve: ({ code }) => {
-          window.clearTimeout(timeout);
-          resolve({ code, redirectUri: MOBILE_REDIRECT_URI });
-        },
-        reject: (e) => {
-          window.clearTimeout(timeout);
-          reject(e);
-        },
-      };
-
-      log.info("Mobile-Login: öffne Consent, warte auf obsidian:// Redirect");
-      openBrowser(
-        this.buildAuthUrl(clientId, MOBILE_REDIRECT_URI, state, codeChallenge)
-      );
-    });
-  }
-
   private async exchangeCodeForTokens(
     code: string,
     redirectUri: string,
     clientId: string,
     codeVerifier: string
   ): Promise<TokenResponse> {
-    const params: Record<string, string> = {
+    const body = new URLSearchParams({
       code,
       client_id: clientId,
+      client_secret: this.settings.clientSecret,
       redirect_uri: redirectUri,
       grant_type: "authorization_code",
       code_verifier: codeVerifier,
-    };
-    // Desktop clients carry a secret; PKCE-only mobile clients don't.
-    if (this.settings.clientSecret) {
-      params.client_secret = this.settings.clientSecret;
-    }
-    const body = new URLSearchParams(params);
+    });
 
     const resp = await requestUrl({
       url: GOOGLE_TOKEN_ENDPOINT,
@@ -355,7 +192,7 @@ export class OAuthManager {
     });
 
     if (resp.status !== 200) {
-      log.error("Token-Austausch fehlgeschlagen:", resp.status, resp.text);
+      log.error("Code exchange failed:", resp.status, resp.text);
       throw new Error(
         t("oauthCodeExchangeFailed", { status: resp.status, text: resp.text })
       );
@@ -372,6 +209,32 @@ interface TokenResponse {
   token_type: string;
 }
 
+const GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
+
+/** Builds the Google consent URL for a given redirect_uri (with PKCE). */
+function buildAuthUrl(
+  clientId: string,
+  redirectUri: string,
+  state: string,
+  codeChallenge: string
+): string {
+  return (
+    GOOGLE_AUTH_ENDPOINT +
+    "?" +
+    new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope: OAUTH_SCOPE,
+      access_type: "offline",
+      prompt: "consent", // forces a refresh token even on repeated login
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
+      state,
+    }).toString()
+  );
+}
+
 function randomToken(): string {
   // No crypto need here beyond the CSRF state; simple, sufficient entropy.
   let s = "";
@@ -381,33 +244,6 @@ function randomToken(): string {
       .slice(1);
   }
   return s;
-}
-
-/**
- * Parses what the user pasted in the manual flow into `{ code, state }`.
- * Accepts either the bare authorization code, or a full redirect URL like
- * `obsidian://gdrive-auth?code=...&state=...` (or an http/https variant). Falls
- * back to treating the whole string as the code when it isn't a URL.
- */
-export function extractCodeAndState(pasted: string): {
-  code: string;
-  state: string;
-} {
-  const trimmed = pasted.trim();
-  if (trimmed.includes("code=") || trimmed.includes("://") || trimmed.includes("?")) {
-    try {
-      // Normalize obsidian:// (and any custom scheme) so URL() can parse the query.
-      const normalized = trimmed.replace(/^[a-zA-Z][\w+.-]*:\/\//, "https://");
-      const url = new URL(normalized);
-      return {
-        code: url.searchParams.get("code") ?? "",
-        state: url.searchParams.get("state") ?? "",
-      };
-    } catch {
-      // Not a parseable URL — fall through to treating it as a bare code.
-    }
-  }
-  return { code: trimmed, state: "" };
 }
 
 /**

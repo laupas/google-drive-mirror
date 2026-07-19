@@ -1,4 +1,4 @@
-import { Notice, Platform, Plugin, TAbstractFile, normalizePath } from "obsidian";
+import { Notice, Plugin, TAbstractFile, normalizePath } from "obsidian";
 import { GoogleDriveClient } from "./drive-client";
 import { OAuthManager } from "./oauth";
 import { SettingsTab } from "./settings-tab";
@@ -55,12 +55,6 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
     this.oauth = new OAuthManager(this.settings);
     this.drive = new GoogleDriveClient(this.oauth);
-
-    // Mobile login redirect: Obsidian delivers obsidian://gdrive-auth back to
-    // the plugin here (mobile can't run the desktop loopback server).
-    this.registerObsidianProtocolHandler("gdrive-auth", (params) => {
-      this.oauth.handleMobileRedirect(params);
-    });
 
     this.storage = new PluginStorage(this.app.vault, this.manifest.id);
 
@@ -306,61 +300,33 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   }
 
   /**
-   * Interactive Google login. MUST be called directly from a click handler.
-   *
-   * iOS/WKWedView silently blocks `window.open` unless it runs synchronously
-   * within the tap gesture. The OAuth flow does async work (PKCE SHA-256) before
-   * the consent URL is ready, which would lose that gesture. So on mobile we
-   * open a BLANK tab synchronously right now (while the gesture is still live)
-   * and only navigate it to the consent URL once the URL is built. On desktop
-   * we open the system browser directly (Electron), where there's no gesture
-   * restriction and the loopback redirect must land in the real browser.
+   * Interactive Google login (DESKTOP only — uses the loopback redirect flow).
+   * On mobile there is no way to receive the redirect; mobile users import a
+   * refresh token exported from desktop instead (see importRefreshToken).
    */
   async login(): Promise<void> {
-    // Grab the user gesture NOW, before any await. Empty on desktop (uses the
-    // direct system-browser open instead).
-    const preopened = Platform.isMobileApp ? window.open("about:blank") : null;
-
-    try {
-      await this.oauth.openLogin((url) => {
-        if (preopened) {
-          preopened.location.href = url; // navigate the gesture-preserved tab
-        } else {
-          openExternal(url); // desktop: system browser
-        }
-      });
-    } catch (e) {
-      // Close the blank tab we opened so it doesn't linger on failure.
-      preopened?.close();
-      throw e;
-    }
-
+    await this.oauth.openLogin((url) => openExternal(url));
     await this.saveSettings();
     log.info(
-      "Login abgeschlossen, refreshToken gesetzt:",
+      "Login finished, refreshToken set:",
       Boolean(this.settings.refreshToken)
     );
     new Notice(t("noticeLoginSuccess"));
   }
 
-  /**
-   * Manual fallback, step 1: build the consent URL to open by hand (used when
-   * the automatic browser open / obsidian:// redirect doesn't work on mobile).
-   */
-  beginManualLogin(): Promise<string> {
-    return this.oauth.beginManualLogin();
+  /** The current refresh token, for copying to another device (may be ""). */
+  exportRefreshToken(): string {
+    return this.oauth.exportRefreshToken();
   }
 
   /**
-   * Manual fallback, step 2: finish login from the pasted code / redirect URL.
+   * Signs in on this device using a refresh token exported from a signed-in
+   * desktop. Verifies it against Google, then persists. Throws if invalid.
    */
-  async completeManualLogin(pasted: string): Promise<void> {
-    await this.oauth.completeManualLogin(pasted);
+  async importRefreshToken(token: string): Promise<void> {
+    await this.oauth.importRefreshToken(token);
     await this.saveSettings();
-    log.info(
-      "Manueller Login abgeschlossen, refreshToken gesetzt:",
-      Boolean(this.settings.refreshToken)
-    );
+    log.info("Refresh token imported, signed in.");
     new Notice(t("noticeLoginSuccess"));
   }
 
@@ -651,12 +617,10 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 }
 
 /**
- * Opens an external URL in the system browser (DESKTOP path).
- *
- * On desktop `window.open(url, "_blank")` routes to the OS browser via Electron.
- * On mobile this is NOT used — see `login()`: iOS blocks `window.open` unless it
- * runs synchronously inside the tap gesture, so mobile opens a blank tab up front
- * and navigates it later instead.
+ * Opens an external URL in the system browser. Used only by the DESKTOP login
+ * flow (mobile doesn't sign in interactively). On desktop `window.open(url,
+ * "_blank")` routes to the OS browser via Electron, so the loopback redirect
+ * lands in the real browser.
  */
 function openExternal(url: string): void {
   window.open(url, "_blank");

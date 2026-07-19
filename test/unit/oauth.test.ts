@@ -9,11 +9,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { requestUrl } from "obsidian";
-import {
-  OAuthManager,
-  pkceChallenge,
-  extractCodeAndState,
-} from "../../src/oauth";
+import { OAuthManager, pkceChallenge } from "../../src/oauth";
 import { DEFAULT_SETTINGS, PluginSettings } from "../../src/types";
 
 const mockedRequestUrl = vi.mocked(requestUrl);
@@ -202,57 +198,52 @@ describe("OAuthManager token exchange & refresh (PKCE)", () => {
     expect(body.get("grant_type")).toBe("refresh_token");
   });
 
-  it("omits client_secret on refresh when none is configured (mobile PKCE)", async () => {
-    // Arrange: a secret-less client (mobile-style).
-    const mgr = new OAuthManager(
-      settings({ clientId: "id-only", clientSecret: "", refreshToken: "r" })
-    );
+});
+
+describe("OAuthManager token import (desktop → mobile)", () => {
+  it("stores the token and signs in when it validates against Google", async () => {
+    // Arrange
+    const s = settings({ clientId: "c", clientSecret: "sec", refreshToken: "" });
+    const mgr = new OAuthManager(s);
     mockedRequestUrl.mockResolvedValue(
       tokenResponse({ access_token: "AT", expires_in: 3600 })
     );
 
     // Act
-    await mgr.getAccessToken();
+    await mgr.importRefreshToken("  pasted-token  ");
 
-    // Assert
-    const body = lastBody();
-    expect(body.has("client_secret")).toBe(false);
+    // Assert: trimmed, stored, and now configured.
+    expect(s.refreshToken).toBe("pasted-token");
+    expect(mgr.isConfigured()).toBe(true);
   });
-});
 
-describe("extractCodeAndState (manual paste parsing)", () => {
-  it("parses code + state from a full obsidian:// redirect URL", () => {
-    // Act
-    const r = extractCodeAndState(
-      "obsidian://gdrive-auth?code=ABC123&state=xyz"
+  it("rolls back and throws when the pasted token is rejected", async () => {
+    // Arrange
+    const s = settings({ clientId: "c", clientSecret: "sec", refreshToken: "old" });
+    const mgr = new OAuthManager(s);
+    mockedRequestUrl.mockResolvedValue({
+      status: 400,
+      text: "invalid_grant",
+      json: {},
+    } as unknown);
+
+    // Act & Assert
+    await expect(mgr.importRefreshToken("bad-token")).rejects.toThrow(
+      /Token refresh failed/i
+    );
+    // The previous token must be restored, not clobbered.
+    expect(s.refreshToken).toBe("old");
+  });
+
+  it("throws on an empty token without calling Google", async () => {
+    // Arrange
+    const mgr = new OAuthManager(
+      settings({ clientId: "c", clientSecret: "sec", refreshToken: "" })
     );
 
-    // Assert
-    expect(r).toEqual({ code: "ABC123", state: "xyz" });
-  });
-
-  it("parses code from an https redirect URL", () => {
-    // Act
-    const r = extractCodeAndState("https://example.com/cb?code=CODE&state=S1");
-
-    // Assert
-    expect(r).toEqual({ code: "CODE", state: "S1" });
-  });
-
-  it("URL-decodes the code value", () => {
-    // Act
-    const r = extractCodeAndState("obsidian://gdrive-auth?code=a%2Fb%2Bc");
-
-    // Assert
-    expect(r.code).toBe("a/b+c");
-  });
-
-  it("treats a bare code (no URL) as the code with empty state", () => {
-    // Act
-    const r = extractCodeAndState("  4/0AbC_bareCode  ");
-
-    // Assert
-    expect(r).toEqual({ code: "4/0AbC_bareCode", state: "" });
+    // Act & Assert
+    await expect(mgr.importRefreshToken("   ")).rejects.toThrow();
+    expect(mockedRequestUrl).not.toHaveBeenCalled();
   });
 });
 

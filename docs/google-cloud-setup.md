@@ -16,10 +16,10 @@ You are not signing up for anything, not paying anything, and not sharing your
 files with the plugin's author. Everything stays in **your** Google account and
 on **your** devices.
 
-> **Two keys if you use your phone too.** Google only lets one key work on
-> computers *or* on phones, not both. So:
-> - **Only using Obsidian on a computer?** Do **Part A** only.
-> - **Also using Obsidian on a phone/tablet?** Do **Part A** *and* **Part B**.
+> **One key, works everywhere.** You create a single key on a computer (Part A).
+> If you also use Obsidian on a phone or tablet, you don't create a second key —
+> you sign in on the computer and then copy a "sign-in token" over to the phone
+> (Part B). Google no longer allows phones to sign in directly.
 
 ---
 
@@ -115,68 +115,62 @@ If you only use a computer, **you can stop here.**
 
 ---
 
-## Part B — The key for your phone or tablet (Mobile)
+## Part B — Getting signed in on your phone or tablet
 
-Do this **in addition to Part A** if you also use Obsidian on iPhone, iPad, or
-Android. You can do these steps on your computer too — you'll just type the
-result into the plugin on your phone at the end.
+Do this **after Part A** if you also use Obsidian on iPhone, iPad, or Android.
+There is **no second key to create** — the phone can't sign in to Google
+directly, so you carry the sign-in over from the computer.
 
-1. In the left menu, go to **"APIs & Services" → "Credentials"**.
-2. Click **"+ Create Credentials"**, then **"OAuth client ID"**.
-3. For **Application type**, choose **"Android"** or **"iOS"** — **either one is
-   fine**, pick whichever the menu offers most easily. (This kind of key has no
-   "secret", which is normal.)
-4. **Name:** anything, e.g. `Obsidian Mobile`.
-5. There will be a field for a **redirect URI** or **custom scheme / bundle**.
-   Enter **exactly** this, with no spaces:
+**On the computer (already signed in from Part A):**
 
-   ```
-   obsidian://gdrive-auth
-   ```
+1. Open Obsidian → **Settings → Google Drive Mirror**.
+2. Click **"Copy sign-in token"**. This copies a long text token to your
+   clipboard.
+3. Get that token onto your phone. Any way works — e.g. paste it into a note
+   that syncs to your phone, email it to yourself, or put it in your password
+   manager. (Treat it like a password.)
 
-   > **This exact text matters.** It's how your phone hands control back to
-   > Obsidian after you sign in. A typo here means sign-in won't return to the
-   > app.
+**On the phone:**
 
-6. Click **"Create"**.
-7. Copy the **Client ID** it gives you. (There is **no secret** for this type —
-   that's correct.)
+4. Open Obsidian → **Settings → Google Drive Mirror**.
+5. Enter the **same Client ID and Client secret** as on the computer (from Part
+   A). You can copy those over the same way.
+6. Expand **"Sign in with a token from another device"**, paste the token into
+   the field, and tap **"Sign in with token"**.
+7. You should see **"✅ Signed in"**. Done — the phone now syncs like the
+   computer.
 
-Now put it into the plugin **on your phone**:
-
-1. On your phone, open Obsidian → **Settings → Google Drive Mirror**.
-2. Paste the value into the **"Mobile client ID"** field.
-3. Leave the "Client secret" empty on mobile.
-4. Tap **"Sign in with Google"**. Your browser opens — pick your account and tap
-   **"Allow"**. It should automatically bounce you back into Obsidian, now
-   signed in.
+> **Why not just sign in on the phone?** Google removed the sign-in methods that
+> used to work inside apps like this on mobile. Copying the token from a
+> computer is now the supported way — and it's a one-time step per device.
 
 ---
 
 ## Troubleshooting
 
-- **"Google hasn't verified this app" warning:** Expected — it's your own app.
-  Choose **Continue / Advanced → proceed**. As long as your email is listed
-  under **Test users**, this is safe.
+- **"Google hasn't verified this app" warning (on the computer):** Expected —
+  it's your own app. Choose **Continue / Advanced → proceed**. As long as your
+  email is listed under **Test users**, this is safe.
 - **"Access blocked" / "you don't have access":** Your Google email isn't in the
   **Test users** list. Go back to **OAuth consent screen → Test users** and add
   it.
-- **Sign-in doesn't return to Obsidian on the phone:** The redirect URI on the
-  mobile key is probably mistyped. It must be **exactly** `obsidian://gdrive-auth`.
-- **`redirect_uri_mismatch` error on the phone:** You used the *Desktop* key on
-  the phone. The phone needs the **Android/iOS** key (Part B) in the **"Mobile
-  client ID"** field.
+- **Phone says sign-in failed after pasting the token:** Make sure you entered
+  the **same Client ID and Client secret** on the phone as on the computer, and
+  that you copied the **whole** token (they're long).
+- **The button doesn't open a browser on the phone:** That's expected — the
+  phone doesn't sign in through a browser. Use the **token** method above
+  instead.
 - **It worked yesterday, now it asks me to sign in again:** Normal from time to
-  time. Just click **"Sign in with Google"** again.
+  time. On the computer, just click **"Sign in with Google"** again; on the
+  phone, copy a fresh token over.
 
 ---
 
 ## What you created (summary)
 
-| Where | Key type | Fields to fill in the plugin |
-|-------|----------|------------------------------|
-| Computer | "Desktop app" | Client ID **+** Client secret |
-| Phone / tablet | "Android" or "iOS" | Mobile client ID (**no** secret), redirect `obsidian://gdrive-auth` |
+| Where | What you do | Fields to fill in the plugin |
+|-------|-------------|------------------------------|
+| Computer | Create one **"Desktop app"** key, sign in | Client ID **+** Client secret |
+| Phone / tablet | **No new key** — paste the copied token | Client ID **+** Client secret **+** the sign-in token |
 
-Both keys live in the **same Google project** and use the **same Drive** — you
-just sign in once per device.
+The one key lives in your Google project and uses your Drive on every device.

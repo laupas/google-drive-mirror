@@ -38,33 +38,32 @@ export const fr: Partial<Messages> = {
   clientSecretName: "Secret client",
   clientSecretDesc:
     "Secret client OAuth 2.0 de votre application Google Cloud.",
-  mobileClientIdName: "ID client mobile",
-  mobileClientIdDesc:
-    "Nécessaire uniquement sur mobile : ID client OAuth d’un client de type « Android/iOS » (sans secret). Enregistrez « obsidian://gdrive-auth » comme URI de redirection autorisée. Laissez vide sur ordinateur.",
   loginName: "Connexion",
   loginDescSignedIn:
     "✅ Connecté. Reconnectez-vous si l'accès a été révoqué.",
   loginDescSignedOut: "Non connecté.",
+  loginDescSignedOutMobile:
+    "Non connecté. Connectez-vous d'abord sur ordinateur, puis copiez-y le jeton et collez-le ci-dessous.",
   loginButtonReauth: "Se reconnecter",
   loginButtonSignIn: "Se connecter avec Google",
   loginFailed: "Échec de la connexion : {error}",
   logoutTooltip: "Se déconnecter (supprimer le jeton)",
-  manualLoginSummary:
-    "Connexion manuelle (si le bouton ci-dessus n'ouvre pas de navigateur)",
-  manualLoginHelp:
-    "À utiliser si appuyer sur « Se connecter avec Google » n'ouvre pas de navigateur (certains appareils mobiles). Suivez les deux étapes ci-dessous.",
-  manualLoginStep1Name: "1. Obtenir le lien de connexion",
-  manualLoginStep1Desc:
-    "Ouvre la page de consentement Google et copie le lien dans le presse-papiers. Connectez-vous et autorisez l'accès.",
-  manualLoginGetLinkButton: "Obtenir le lien",
-  manualLoginLinkCopied:
-    "Lien de connexion copié. Ouvrez-le dans un navigateur et autorisez l'accès.",
-  manualLoginStep2Name: "2. Coller le résultat",
-  manualLoginStep2Desc:
-    "Après autorisation, vous arriverez sur une page « obsidian://… » (elle peut indiquer qu'elle ne peut pas s'ouvrir). Copiez toute l'adresse — ou seulement le code — et collez-la ici.",
-  manualLoginCodePlaceholder: "obsidian://gdrive-auth?code=… ou juste le code",
-  manualLoginCompleteButton: "Terminer la connexion",
-  manualLoginNoInput: "Collez d'abord le code ou l'URL de redirection.",
+  tokenCopyName: "Copier le jeton de connexion (pour mobile)",
+  tokenCopyDesc:
+    "Copie votre jeton de connexion pour le coller dans Obsidian sur votre téléphone ou tablette, qui ne peut pas se connecter directement.",
+  tokenCopyButton: "Copier le jeton",
+  tokenCopied:
+    "Jeton de connexion copié. Collez-le dans Obsidian sur votre autre appareil.",
+  tokenCopyManual: "Copiez ce jeton de connexion : {token}",
+  tokenImportSummary: "Se connecter avec un jeton d'un autre appareil",
+  tokenImportHelp:
+    "Sur mobile, vous ne pouvez pas vous connecter directement. Connectez-vous sur ordinateur, appuyez sur « Copier le jeton », puis collez-le ici.",
+  tokenImportName: "Jeton de connexion",
+  tokenImportDesc:
+    "Collez le jeton copié depuis un ordinateur connecté. Nécessite le même ID client et secret ci-dessus.",
+  tokenImportPlaceholder: "Collez le jeton de connexion",
+  tokenImportButton: "Se connecter avec le jeton",
+  tokenImportNoInput: "Collez d'abord le jeton de connexion.",
 
   // ---- Paramètres : dossiers ----
   // ---- Paramètres : cibles de synchronisation ----
@@ -265,8 +264,7 @@ export const fr: Partial<Messages> = {
     "Échec de l'échange du code ({status}) : {text}",
   oauthLoopbackDesktopOnly:
     "La connexion en loopback n'est disponible que sur ordinateur.",
-  oauthManualNoPending:
-    "Aucune connexion manuelle en cours. Obtenez d'abord le lien de connexion.",
+  oauthImportEmpty: "Aucun jeton saisi.",
 
   // ---- Suggestions ----
   suggestWholeVault: "/ (tout le coffre)",
