@@ -52,6 +52,7 @@ function setup(opts: SetupOptions = {}) {
     store,
     target,
     status,
+    vault.fileManager as never,
     () => siblingLocalFolders ?? []
   );
   return { engine, vault, drive, store, storage, target, status };
@@ -396,7 +397,7 @@ describe("SyncEngine.sync — Löschung remote propagieren", () => {
     expect(store.get("x.md")).toBeUndefined();
   });
 
-  it("uses FileManager.trashFile (deletion preference) when a FileManager is provided", async () => {
+  it("routes a local deletion through FileManager.trashFile (deletion preference)", async () => {
     // Arrange: file known in the base, present locally, gone remotely.
     const md5 = md5Hex("stabiler inhalt");
     const vault = new FakeVault();
@@ -416,8 +417,9 @@ describe("SyncEngine.sync — Löschung remote propagieren", () => {
     });
     vault.seed("x.md", "stabiler inhalt");
 
-    // A FileManager spy; the engine must prefer it over vault.trash().
-    const trashFile = vi.fn(async () => {});
+    // Spy on FileManager.trashFile (the ONLY deletion path); vault.trash must
+    // never be called.
+    const trashFile = vi.spyOn(vault.fileManager, "trashFile");
     const vaultTrash = vi.spyOn(vault, "trash");
     const target: SyncTarget = {
       ...newTarget("t1", "Test target"),
@@ -429,8 +431,8 @@ describe("SyncEngine.sync — Löschung remote propagieren", () => {
       store,
       target,
       new SyncStatus(),
-      () => [],
-      { trashFile } as never
+      vault.fileManager as never,
+      () => []
     );
 
     // Act
@@ -440,6 +442,7 @@ describe("SyncEngine.sync — Löschung remote propagieren", () => {
     expect(summary?.deletedLocal).toBe(1);
     expect(trashFile).toHaveBeenCalledTimes(1);
     expect(vaultTrash).not.toHaveBeenCalled();
+    expect(vault.has("x.md")).toBe(false);
     expect(store.get("x.md")).toBeUndefined();
   });
 });

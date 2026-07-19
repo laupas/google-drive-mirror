@@ -75,6 +75,16 @@ export class FakeVault {
   async trash(file: TFile, _system: boolean): Promise<void> {
     this.files.delete(file.path);
   }
+
+  /**
+   * Fake of Obsidian's FileManager (only `trashFile`, which the engine uses).
+   * Deletes from the same in-memory map, so `has()` assertions keep working.
+   */
+  public fileManager = {
+    trashFile: async (file: TFile): Promise<void> => {
+      this.files.delete(file.path);
+    },
+  };
 }
 
 class FakeAdapter {

@@ -107,23 +107,17 @@ export class SyncEngine {
     private state: SyncStateStore,
     private target: SyncTarget,
     private status: SyncStatus,
-    private siblingLocalFolders: () => string[] = () => [],
-    private fileManager?: FileManager
+    private fileManager: FileManager,
+    private siblingLocalFolders: () => string[] = () => []
   ) {}
 
   /**
-   * Moves a local file/folder to the trash, respecting the user's deletion
-   * preference. Prefers `FileManager.trashFile()` (honors the vault's
-   * "Deleted files" setting: vault `.trash`, system trash, or permanent);
-   * falls back to `Vault.trash(file, false)` (vault `.trash`) when no
-   * FileManager is available (e.g. in tests).
+   * Moves a local file/folder to the trash via `FileManager.trashFile()`, which
+   * honors the vault's "Deleted files" preference (vault `.trash`, system trash,
+   * or permanent).
    */
   private async trashFile(file: TFile | TFolder): Promise<void> {
-    if (this.fileManager) {
-      await this.fileManager.trashFile(file);
-    } else {
-      await this.vault.trash(file, false);
-    }
+    await this.fileManager.trashFile(file);
   }
 
   isRunning(): boolean {

@@ -2,22 +2,48 @@
  * Desktop-only OAuth loopback helper.
  *
  * Runs a one-shot local HTTP server on 127.0.0.1 to catch Google's redirect
- * (the "Desktop app" client flow). Node's `http`/`net` are loaded via dynamic
- * `import()` at call time, so there is no static Node import and mobile never
- * evaluates it — `oauth.ts` additionally only imports this module lazily inside
- * its desktop branch. The `import("...")` type queries below give full typings
- * without pulling in a runtime dependency.
+ * (the "Desktop app" client flow). Node's `http` module is loaded via dynamic
+ * `import()` guarded by `Platform.isDesktop`, so there is no static Node import
+ * and mobile never evaluates it — `oauth.ts` additionally only imports this
+ * module lazily inside its desktop branch.
+ *
+ * We deliberately do NOT reference `@types/node` here (not `import`, not a type
+ * query): the Obsidian lint config treats Node types as unavailable, so any such
+ * reference degrades to `any` and trips the `no-unsafe-*` rules. Instead we
+ * declare the MINIMAL structural interfaces this file actually uses, which keeps
+ * everything fully typed with no `any` and no Node dependency.
  */
 
 import { Platform } from "obsidian";
 import { log } from "./logger";
 import { t } from "./i18n";
 
-/** Node's `http` module type, derived without a static import. */
-type HttpModule = typeof import("http");
-type IncomingMessage = import("http").IncomingMessage;
-type ServerResponse = import("http").ServerResponse;
-type AddressInfo = import("net").AddressInfo;
+/** Minimal shape of Node's `http.IncomingMessage` used here. */
+interface NodeRequest {
+  url?: string;
+}
+
+/** Minimal shape of Node's `http.ServerResponse` used here. */
+interface NodeResponse {
+  writeHead(status: number, headers?: Record<string, string>): NodeResponse;
+  end(body?: string): void;
+  on(event: "finish", listener: () => void): void;
+}
+
+/** Minimal shape of Node's `http.Server` used here. */
+interface NodeServer {
+  on(event: "error", listener: (err: Error) => void): void;
+  listen(port: number, host: string, listeningListener: () => void): void;
+  address(): { port: number } | string | null;
+  close(): void;
+}
+
+/** Minimal shape of the Node `http` module used here. */
+interface NodeHttpModule {
+  createServer(
+    handler: (req: NodeRequest, res: NodeResponse) => void
+  ): NodeServer;
+}
 
 /** Result of a successful loopback capture. */
 export interface LoopbackResult {
@@ -47,7 +73,7 @@ export async function awaitLoopbackAuthCode(
   if (!Platform.isDesktop) {
     throw new Error(t("oauthLoopbackDesktopOnly"));
   }
-  const httpMod: HttpModule = await import("http");
+  const httpMod = (await import("http")) as unknown as NodeHttpModule;
 
   return new Promise<LoopbackResult>((resolve, reject) => {
     let settled = false;
@@ -55,8 +81,8 @@ export async function awaitLoopbackAuthCode(
     // and token-exchange redirect_uri match exactly.
     let redirectUri = "";
 
-    const server = httpMod.createServer(
-      (req: IncomingMessage, res: ServerResponse) => {
+    const server: NodeServer = httpMod.createServer(
+      (req: NodeRequest, res: NodeResponse) => {
         try {
           const reqUrl = new URL(req.url ?? "", "http://127.0.0.1");
           log.info("HTTP request on loopback:", reqUrl.pathname);
@@ -110,8 +136,9 @@ export async function awaitLoopbackAuthCode(
 
     // Port 0 = any free port.
     server.listen(0, "127.0.0.1", () => {
-      const addr = server.address() as AddressInfo;
-      redirectUri = `http://127.0.0.1:${addr.port}/callback`;
+      const addr = server.address();
+      const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+      redirectUri = `http://127.0.0.1:${port}/callback`;
       log.info("Loopback server listening, redirect_uri=" + redirectUri);
       openBrowser(buildAuthUrl(redirectUri));
     });

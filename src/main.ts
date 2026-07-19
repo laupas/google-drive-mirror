@@ -159,8 +159,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
         state,
         target,
         this.status,
-        () => this.siblingLocalFolders(target.id),
-        this.app.fileManager
+        this.app.fileManager,
+        () => this.siblingLocalFolders(target.id)
       );
       next.set(target.id, { engine, state });
     }

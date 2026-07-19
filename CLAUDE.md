@@ -66,7 +66,7 @@ Data flow: `main.ts` wires everything up → `SyncEngine` orchestrates a run →
 |------|------|
 | `main.ts` | Plugin entry point. Holds one `SyncEngine`+`SyncStateStore` PER target (`runtimes` map, rebuilt on target changes), runs targets sequentially in `runSync()`, target CRUD (`addTarget`/`removeTarget`/`updateTarget`/`setDriveFolderForTarget`/`setLocalFolderForTarget`). Commands, ribbon, vault events (debounced upload), poll timer, login. |
 | `oauth.ts` | OAuth 2.0 with **PKCE** on both platforms. Desktop: **loopback flow** (Desktop app) — lazy-loads `oauth-loopback.ts` (the Node `http`/`net` server on `127.0.0.1:<port>` that catches the redirect). Mobile: **`obsidian://gdrive-auth`** redirect delivered via `registerObsidianProtocolHandler` (wired in `main.ts`) → `handleMobileRedirect()`. `effectiveClientId()` picks `settings.mobileClientId` on mobile (iOS/Android client, no secret) else `settings.clientId`. Token refresh directly against Google; `client_secret` sent only when present. |
-| `oauth-loopback.ts` | Desktop-only loopback server (`awaitLoopbackAuthCode`, async). Loads Node `http` via dynamic `await import("http")` (types via `import("http")` type queries — no static Node `import`, no `require`), so mobile never evaluates it; it is **also** only imported via dynamic `import()` from `oauth.ts`'s desktop branch. esbuild keeps `import("http")` external. |
+| `oauth-loopback.ts` | Desktop-only loopback server (`awaitLoopbackAuthCode`, async). Loads Node `http` via dynamic `await import("http")` **guarded by `Platform.isDesktop`** (throws `oauthLoopbackDesktopOnly` otherwise) — no static Node `import`, no `require`. Types come from **minimal local interfaces** (`NodeHttpModule`/`NodeServer`/…), NOT `@types/node`: the Obsidian lint config treats Node types as unavailable, so any `import("http")` type query degrades to `any` and trips `no-unsafe-*`. It is **also** only imported via dynamic `import()` from `oauth.ts`'s desktop branch. esbuild keeps `import("http")` external. |
 | `md5.ts` | Pure-JS MD5 (`md5Hex(ArrayBuffer)`) replacing Node `crypto` — works on mobile. Output byte-identical to Node's, guarded by known-vector tests. |
 | `drive-client.ts` | Google Drive REST API v3 (list/download/upload/trash/search/folder). |
 | `sync-engine.ts` | Operates on ONE `SyncTarget` (+ a `siblingLocalFolders()` provider for cross-target exclusion). Collects the local state (MD5 hash), fetches the Drive state, filters, executes actions, updates the sync base. |
@@ -209,11 +209,12 @@ sync-state, sync-status, drive-client, oauth, i18n), `test/integration/` (sync-e
   loss.
 - **Deletions → trash**, never hard: Drive via `trashFile` (`trashed: true`), locally via
   the engine's `trashFile()` helper → **`FileManager.trashFile()`** (respects the user's
-  "Deleted files" preference: vault `.trash`, system trash, or permanent), with a
-  `vault.trash(file, false)` fallback when no `FileManager` is injected (e.g. in tests), and
+  "Deleted files" preference: vault `.trash`, system trash, or permanent), and
   `adapter.trashLocal(path)` for paths without a loaded `TFile`/`TFolder`. The engine takes
-  an optional `FileManager` ctor arg (`main.ts` passes `app.fileManager`). Applies to files
-  AND folders. Covered by an integration test asserting `FileManager.trashFile` is preferred.
+  a **required** `FileManager` ctor arg (`main.ts` passes `app.fileManager`; tests pass
+  `FakeVault.fileManager`) — there is deliberately no `vault.trash` fallback (the Obsidian
+  reviewer flags any `Vault.trash()` use). Applies to files AND folders. Covered by an
+  integration test asserting the local deletion routes through `FileManager.trashFile`.
 - **Filter (`extensionAllowed` + `isGoogleAppsFile` in `sync-engine.ts`):** Google Editors
   files (`application/vnd.google-apps.*` → Docs/Sheets/Slides/folders) are **always**
   skipped, since they aren't downloadable as binary files (otherwise 403
