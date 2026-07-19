@@ -112,6 +112,28 @@
 .gds-log--modal {
   max-height: 60vh;
 }
+/*
+ * In the full-log MODAL, show the complete message: let rows wrap instead of
+ * truncating with an ellipsis (the compact inline log in the settings tab keeps
+ * its single-line look). Important on mobile, where a narrow screen would
+ * otherwise clip the whole message — including errors.
+ */
+.gds-log--modal .gds-log-row {
+  white-space: normal;
+  align-items: baseline;
+}
+.gds-log--modal .gds-log-msg {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.gds-log--modal .gds-log-time {
+  white-space: nowrap;
+}
 
 /* Sync-Baum (alle Ordner/Dateien; keptRemoteOnly mit Aktionen). */
 .gds-sync-tree {
