@@ -243,6 +243,8 @@ export const it: Partial<Messages> = {
   oauthStateMismatch: "Lo state non corrisponde (protezione CSRF).",
   oauthTimeout: "Timeout durante l'accesso (5 minuti).",
   oauthCodeExchangeFailed: "Scambio del codice non riuscito ({status}): {text}",
+  oauthLoopbackDesktopOnly:
+    "L'accesso tramite loopback è disponibile solo su desktop.",
 
   // ---- Suggeritori ----
   suggestWholeVault: "/ (intero vault)",

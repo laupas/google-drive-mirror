@@ -247,6 +247,8 @@ export const fr: Partial<Messages> = {
   oauthTimeout: "Délai d'attente dépassé lors de la connexion (5 minutes).",
   oauthCodeExchangeFailed:
     "Échec de l'échange du code ({status}) : {text}",
+  oauthLoopbackDesktopOnly:
+    "La connexion en loopback n'est disponible que sur ordinateur.",
 
   // ---- Suggestions ----
   suggestWholeVault: "/ (tout le coffre)",

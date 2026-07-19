@@ -9,6 +9,7 @@
  * without pulling in a runtime dependency.
  */
 
+import { Platform } from "obsidian";
 import { log } from "./logger";
 import { t } from "./i18n";
 
@@ -40,8 +41,12 @@ export async function awaitLoopbackAuthCode(
   buildAuthUrl: (redirectUri: string) => string,
   openBrowser: (url: string) => void
 ): Promise<LoopbackResult> {
-  // Load Node's http via dynamic import; this file is only ever reached on
-  // desktop (oauth.ts imports it lazily inside its desktop branch).
+  // The loopback flow needs Node's http server, which mobile lacks. Guard the
+  // dynamic import with Platform.isDesktop so mobile never loads a Node built-in
+  // (oauth.ts additionally only reaches this on its desktop branch).
+  if (!Platform.isDesktop) {
+    throw new Error(t("oauthLoopbackDesktopOnly"));
+  }
   const httpMod: HttpModule = await import("http");
 
   return new Promise<LoopbackResult>((resolve, reject) => {

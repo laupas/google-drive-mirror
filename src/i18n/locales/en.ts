@@ -235,6 +235,8 @@ export const en = {
   oauthStateMismatch: "State does not match (CSRF protection).",
   oauthTimeout: "Sign-in timed out (5 minutes).",
   oauthCodeExchangeFailed: "Code exchange failed ({status}): {text}",
+  oauthLoopbackDesktopOnly:
+    "The loopback sign-in is only available on desktop.",
 
   // ---- Suggesters (suggesters.ts) ----
   suggestWholeVault: "/ (entire vault)",

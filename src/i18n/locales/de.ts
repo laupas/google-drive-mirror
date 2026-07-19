@@ -238,6 +238,8 @@ export const de: Partial<Messages> = {
   oauthStateMismatch: "State stimmt nicht überein (CSRF-Schutz).",
   oauthTimeout: "Zeitüberschreitung bei der Anmeldung (5 Minuten).",
   oauthCodeExchangeFailed: "Code-Austausch fehlgeschlagen ({status}): {text}",
+  oauthLoopbackDesktopOnly:
+    "Die Loopback-Anmeldung ist nur am Desktop verfügbar.",
 
   // ---- Suggester ----
   suggestWholeVault: "/ (gesamter Vault)",
