@@ -113,6 +113,66 @@ export class OAuthManager {
     pending.resolve({ code: params.code });
   }
 
+  // ---------- Manual (paste-code) fallback ----------
+  //
+  // If the automatic browser open / obsidian:// redirect fails on mobile, the
+  // user can do the flow by hand: get the URL, open it in any browser, approve,
+  // then paste back the code (or the full redirect URL). We stash the PKCE
+  // verifier + state between the two calls.
+
+  private pendingManual: { state: string; codeVerifier: string } | null = null;
+
+  /**
+   * Step 1 of the manual flow: builds the consent URL and remembers the PKCE
+   * verifier/state for step 2. Returns the URL to open in a browser.
+   */
+  async beginManualLogin(): Promise<string> {
+    const clientId = this.effectiveClientId();
+    if (!clientId) {
+      throw new Error(t("oauthCredentialsMissing"));
+    }
+    const state = randomToken();
+    const codeVerifier = randomVerifier();
+    const codeChallenge = await pkceChallenge(codeVerifier);
+    this.pendingManual = { state, codeVerifier };
+    return this.buildAuthUrl(clientId, MOBILE_REDIRECT_URI, state, codeChallenge);
+  }
+
+  /**
+   * Step 2 of the manual flow: the user pastes either the bare authorization
+   * code or the full `obsidian://gdrive-auth?...` redirect URL. Exchanges it for
+   * tokens using the verifier from step 1. Caller must saveSettings() after.
+   */
+  async completeManualLogin(pasted: string): Promise<void> {
+    const pending = this.pendingManual;
+    if (!pending) {
+      throw new Error(t("oauthManualNoPending"));
+    }
+    const { code, state } = extractCodeAndState(pasted);
+    if (!code) {
+      throw new Error(t("oauthNoCode"));
+    }
+    // If a state came back with the URL, it must match; a bare code has none.
+    if (state && state !== pending.state) {
+      throw new Error(t("oauthStateMismatch"));
+    }
+
+    const tokenResp = await this.exchangeCodeForTokens(
+      code,
+      MOBILE_REDIRECT_URI,
+      this.effectiveClientId(),
+      pending.codeVerifier
+    );
+    this.pendingManual = null;
+
+    if (!tokenResp.refresh_token) {
+      throw new Error(t("oauthNoRefreshToken"));
+    }
+    this.settings.refreshToken = tokenResp.refresh_token;
+    this.cachedAccessToken = tokenResp.access_token;
+    this.cachedTokenExpiryMs = Date.now() + (tokenResp.expires_in - 60) * 1000;
+  }
+
   /**
    * Returns a valid access token; renews it via the refresh token when
    * needed. Throws if not configured.
@@ -321,6 +381,33 @@ function randomToken(): string {
       .slice(1);
   }
   return s;
+}
+
+/**
+ * Parses what the user pasted in the manual flow into `{ code, state }`.
+ * Accepts either the bare authorization code, or a full redirect URL like
+ * `obsidian://gdrive-auth?code=...&state=...` (or an http/https variant). Falls
+ * back to treating the whole string as the code when it isn't a URL.
+ */
+export function extractCodeAndState(pasted: string): {
+  code: string;
+  state: string;
+} {
+  const trimmed = pasted.trim();
+  if (trimmed.includes("code=") || trimmed.includes("://") || trimmed.includes("?")) {
+    try {
+      // Normalize obsidian:// (and any custom scheme) so URL() can parse the query.
+      const normalized = trimmed.replace(/^[a-zA-Z][\w+.-]*:\/\//, "https://");
+      const url = new URL(normalized);
+      return {
+        code: url.searchParams.get("code") ?? "",
+        state: url.searchParams.get("state") ?? "",
+      };
+    } catch {
+      // Not a parseable URL — fall through to treating it as a bare code.
+    }
+  }
+  return { code: trimmed, state: "" };
 }
 
 /**

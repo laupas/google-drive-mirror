@@ -48,6 +48,22 @@ export const it: Partial<Messages> = {
   loginButtonSignIn: "Accedi con Google",
   loginFailed: "Accesso non riuscito: {error}",
   logoutTooltip: "Disconnetti (elimina token)",
+  manualLoginSummary:
+    "Accesso manuale (se il pulsante sopra non apre un browser)",
+  manualLoginHelp:
+    "Usalo se toccando “Accedi con Google” non si apre un browser (su alcuni dispositivi mobili). Esegui i due passaggi qui sotto.",
+  manualLoginStep1Name: "1. Ottieni il link di accesso",
+  manualLoginStep1Desc:
+    "Apre la pagina di consenso di Google e copia il link negli appunti. Accedi lì e concedi l'accesso.",
+  manualLoginGetLinkButton: "Ottieni link di accesso",
+  manualLoginLinkCopied:
+    "Link di accesso copiato. Aprilo in un browser e concedi l'accesso.",
+  manualLoginStep2Name: "2. Incolla il risultato",
+  manualLoginStep2Desc:
+    "Dopo l'approvazione arriverai su una pagina “obsidian://…” (potrebbe dire che non può aprirla). Copia l'intero indirizzo — o solo il codice — e incollalo qui.",
+  manualLoginCodePlaceholder: "obsidian://gdrive-auth?code=… o solo il codice",
+  manualLoginCompleteButton: "Completa l'accesso",
+  manualLoginNoInput: "Incolla prima il codice o l'URL di reindirizzamento.",
 
   // ---- Impostazioni: cartelle ----
   // ---- Impostazioni: destinazioni di sincronizzazione ----
@@ -245,6 +261,8 @@ export const it: Partial<Messages> = {
   oauthCodeExchangeFailed: "Scambio del codice non riuscito ({status}): {text}",
   oauthLoopbackDesktopOnly:
     "L'accesso tramite loopback è disponibile solo su desktop.",
+  oauthManualNoPending:
+    "Nessun accesso manuale in corso. Ottieni prima il link di accesso.",
 
   // ---- Suggeritori ----
   suggestWholeVault: "/ (intero vault)",

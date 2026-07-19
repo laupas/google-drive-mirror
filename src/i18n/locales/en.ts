@@ -48,6 +48,20 @@ export const en = {
   loginButtonSignIn: "Sign in with Google",
   loginFailed: "Sign-in failed: {error}",
   logoutTooltip: "Sign out (delete token)",
+  manualLoginSummary: "Manual sign-in (if the button above doesn't open a browser)",
+  manualLoginHelp:
+    "Use this if tapping “Sign in with Google” doesn't open a browser (some mobile setups). Do the two steps below.",
+  manualLoginStep1Name: "1. Get the sign-in link",
+  manualLoginStep1Desc:
+    "Opens the Google consent page and copies the link to your clipboard. Sign in there and approve access.",
+  manualLoginGetLinkButton: "Get sign-in link",
+  manualLoginLinkCopied: "Sign-in link copied. Open it in a browser and approve.",
+  manualLoginStep2Name: "2. Paste the result",
+  manualLoginStep2Desc:
+    "After approving you'll land on an “obsidian://…” page (it may say it can't open). Copy that whole address — or just the code — and paste it here.",
+  manualLoginCodePlaceholder: "obsidian://gdrive-auth?code=… or the bare code",
+  manualLoginCompleteButton: "Complete sign-in",
+  manualLoginNoInput: "Paste the code or redirect URL first.",
 
   // ---- Settings: sync targets (settings-tab.ts) ----
   headingTargets: "2. Sync targets",
@@ -237,6 +251,8 @@ export const en = {
   oauthCodeExchangeFailed: "Code exchange failed ({status}): {text}",
   oauthLoopbackDesktopOnly:
     "The loopback sign-in is only available on desktop.",
+  oauthManualNoPending:
+    "No manual sign-in in progress. Tap “Get sign-in link” first.",
 
   // ---- Suggesters (suggesters.ts) ----
   suggestWholeVault: "/ (entire vault)",

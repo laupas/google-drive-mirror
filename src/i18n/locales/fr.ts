@@ -49,6 +49,22 @@ export const fr: Partial<Messages> = {
   loginButtonSignIn: "Se connecter avec Google",
   loginFailed: "Échec de la connexion : {error}",
   logoutTooltip: "Se déconnecter (supprimer le jeton)",
+  manualLoginSummary:
+    "Connexion manuelle (si le bouton ci-dessus n'ouvre pas de navigateur)",
+  manualLoginHelp:
+    "À utiliser si appuyer sur « Se connecter avec Google » n'ouvre pas de navigateur (certains appareils mobiles). Suivez les deux étapes ci-dessous.",
+  manualLoginStep1Name: "1. Obtenir le lien de connexion",
+  manualLoginStep1Desc:
+    "Ouvre la page de consentement Google et copie le lien dans le presse-papiers. Connectez-vous et autorisez l'accès.",
+  manualLoginGetLinkButton: "Obtenir le lien",
+  manualLoginLinkCopied:
+    "Lien de connexion copié. Ouvrez-le dans un navigateur et autorisez l'accès.",
+  manualLoginStep2Name: "2. Coller le résultat",
+  manualLoginStep2Desc:
+    "Après autorisation, vous arriverez sur une page « obsidian://… » (elle peut indiquer qu'elle ne peut pas s'ouvrir). Copiez toute l'adresse — ou seulement le code — et collez-la ici.",
+  manualLoginCodePlaceholder: "obsidian://gdrive-auth?code=… ou juste le code",
+  manualLoginCompleteButton: "Terminer la connexion",
+  manualLoginNoInput: "Collez d'abord le code ou l'URL de redirection.",
 
   // ---- Paramètres : dossiers ----
   // ---- Paramètres : cibles de synchronisation ----
@@ -249,6 +265,8 @@ export const fr: Partial<Messages> = {
     "Échec de l'échange du code ({status}) : {text}",
   oauthLoopbackDesktopOnly:
     "La connexion en loopback n'est disponible que sur ordinateur.",
+  oauthManualNoPending:
+    "Aucune connexion manuelle en cours. Obtenez d'abord le lien de connexion.",
 
   // ---- Suggestions ----
   suggestWholeVault: "/ (tout le coffre)",

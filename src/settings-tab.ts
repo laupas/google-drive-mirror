@@ -137,6 +137,8 @@ export class SettingsTab extends PluginSettingTab {
           });
       });
 
+    this.renderManualLogin(containerEl);
+
     // ---- 2. Sync targets ----
     new Setting(containerEl).setName(t("headingTargets")).setHeading();
     containerEl.createEl("p", {
@@ -295,6 +297,85 @@ export class SettingsTab extends PluginSettingTab {
             await this.plugin.resetAllBases();
             new Notice(t("resetSyncStateNotice"));
             this.display();
+          })
+      );
+  }
+
+  /**
+   * Manual sign-in fallback (collapsible). For cases where the automatic
+   * browser open / obsidian:// redirect doesn't work (notably some iOS setups):
+   * get the sign-in link, open it in any browser, approve, then paste the code
+   * (or the full redirect URL) back here.
+   */
+  private renderManualLogin(containerEl: HTMLElement): void {
+    const details = containerEl.createEl("details", { cls: "gds-manual-login" });
+    details.createEl("summary", { text: t("manualLoginSummary") });
+    details.createEl("p", {
+      cls: "setting-item-description",
+      text: t("manualLoginHelp"),
+    });
+
+    let pasted = "";
+
+    // Step 1: get + open + copy the sign-in link.
+    new Setting(details)
+      .setName(t("manualLoginStep1Name"))
+      .setDesc(t("manualLoginStep1Desc"))
+      .addButton((b) =>
+        b.setButtonText(t("manualLoginGetLinkButton")).onClick(async () => {
+          try {
+            const url = await this.plugin.beginManualLogin();
+            // Best-effort: open it and copy it, so the user has both.
+            window.open(url);
+            try {
+              await navigator.clipboard.writeText(url);
+              new Notice(t("manualLoginLinkCopied"), 6000);
+            } catch {
+              // Clipboard may be unavailable; the opened tab still works.
+            }
+          } catch (e) {
+            new Notice(
+              t("loginFailed", {
+                error: e instanceof Error ? e.message : String(e),
+              }),
+              10000
+            );
+          }
+        })
+      );
+
+    // Step 2: paste the code / redirect URL and complete.
+    new Setting(details)
+      .setName(t("manualLoginStep2Name"))
+      .setDesc(t("manualLoginStep2Desc"))
+      .addText((c) =>
+        c
+          .setPlaceholder(t("manualLoginCodePlaceholder"))
+          .onChange((v) => {
+            pasted = v.trim();
+          })
+      )
+      .addButton((b) =>
+        b
+          .setButtonText(t("manualLoginCompleteButton"))
+          .setCta()
+          .onClick(async () => {
+            if (!pasted) {
+              new Notice(t("manualLoginNoInput"), 6000);
+              return;
+            }
+            try {
+              await this.plugin.completeManualLogin(pasted);
+              this.display();
+            } catch (e) {
+              log.error("Manueller Login-Fehler:", e);
+              new Notice(
+                t("loginFailed", {
+                  error: e instanceof Error ? e.message : String(e),
+                }),
+                10000
+              );
+            }
           })
       );
   }

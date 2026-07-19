@@ -48,6 +48,22 @@ export const de: Partial<Messages> = {
   loginButtonSignIn: "Mit Google anmelden",
   loginFailed: "Anmeldung fehlgeschlagen: {error}",
   logoutTooltip: "Abmelden (Token löschen)",
+  manualLoginSummary:
+    "Manuelle Anmeldung (falls die Schaltfläche oben keinen Browser öffnet)",
+  manualLoginHelp:
+    "Nutze dies, wenn „Mit Google anmelden“ keinen Browser öffnet (bei manchen Mobilgeräten). Führe die beiden Schritte unten aus.",
+  manualLoginStep1Name: "1. Anmelde-Link holen",
+  manualLoginStep1Desc:
+    "Öffnet die Google-Zustimmungsseite und kopiert den Link in die Zwischenablage. Melde dich dort an und erteile den Zugriff.",
+  manualLoginGetLinkButton: "Anmelde-Link holen",
+  manualLoginLinkCopied:
+    "Anmelde-Link kopiert. Öffne ihn im Browser und bestätige den Zugriff.",
+  manualLoginStep2Name: "2. Ergebnis einfügen",
+  manualLoginStep2Desc:
+    "Nach der Bestätigung landest du auf einer „obsidian://…“-Seite (evtl. mit Fehler beim Öffnen). Kopiere die ganze Adresse — oder nur den Code — und füge sie hier ein.",
+  manualLoginCodePlaceholder: "obsidian://gdrive-auth?code=… oder nur der Code",
+  manualLoginCompleteButton: "Anmeldung abschließen",
+  manualLoginNoInput: "Füge zuerst den Code oder die Weiterleitungs-URL ein.",
 
   // ---- Einstellungen: Sync-Ziele ----
   headingTargets: "2. Sync-Ziele",
@@ -240,6 +256,8 @@ export const de: Partial<Messages> = {
   oauthCodeExchangeFailed: "Code-Austausch fehlgeschlagen ({status}): {text}",
   oauthLoopbackDesktopOnly:
     "Die Loopback-Anmeldung ist nur am Desktop verfügbar.",
+  oauthManualNoPending:
+    "Keine manuelle Anmeldung aktiv. Hole zuerst den Anmelde-Link.",
 
   // ---- Suggester ----
   suggestWholeVault: "/ (gesamter Vault)",

@@ -9,7 +9,11 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { requestUrl } from "obsidian";
-import { OAuthManager, pkceChallenge } from "../../src/oauth";
+import {
+  OAuthManager,
+  pkceChallenge,
+  extractCodeAndState,
+} from "../../src/oauth";
 import { DEFAULT_SETTINGS, PluginSettings } from "../../src/types";
 
 const mockedRequestUrl = vi.mocked(requestUrl);
@@ -213,6 +217,42 @@ describe("OAuthManager token exchange & refresh (PKCE)", () => {
     // Assert
     const body = lastBody();
     expect(body.has("client_secret")).toBe(false);
+  });
+});
+
+describe("extractCodeAndState (manual paste parsing)", () => {
+  it("parses code + state from a full obsidian:// redirect URL", () => {
+    // Act
+    const r = extractCodeAndState(
+      "obsidian://gdrive-auth?code=ABC123&state=xyz"
+    );
+
+    // Assert
+    expect(r).toEqual({ code: "ABC123", state: "xyz" });
+  });
+
+  it("parses code from an https redirect URL", () => {
+    // Act
+    const r = extractCodeAndState("https://example.com/cb?code=CODE&state=S1");
+
+    // Assert
+    expect(r).toEqual({ code: "CODE", state: "S1" });
+  });
+
+  it("URL-decodes the code value", () => {
+    // Act
+    const r = extractCodeAndState("obsidian://gdrive-auth?code=a%2Fb%2Bc");
+
+    // Assert
+    expect(r.code).toBe("a/b+c");
+  });
+
+  it("treats a bare code (no URL) as the code with empty state", () => {
+    // Act
+    const r = extractCodeAndState("  4/0AbC_bareCode  ");
+
+    // Assert
+    expect(r).toEqual({ code: "4/0AbC_bareCode", state: "" });
   });
 });
 
