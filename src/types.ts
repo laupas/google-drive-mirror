@@ -44,7 +44,7 @@ export interface SyncTarget {
   /**
    * Comma-separated list of ignore patterns (blacklist), complementary to
    * `allowedExtensions`. Allows plain extensions (`tmp`, `.tmp`) as well as
-   * glob patterns (`*.log`, `temp/*`, `**​/drafts/**`). Empty = ignore nothing.
+   * glob patterns (`*.log`, `temp/*`, `**\/drafts\/**`). Empty = ignore nothing.
    * Applies on BOTH sides (local + Drive), so an ignored file is not
    * misinterpreted as "deleted on one side". See `src/ignore.ts`.
    */

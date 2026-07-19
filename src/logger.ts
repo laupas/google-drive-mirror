@@ -18,7 +18,9 @@ export function setDebugLogging(enabled: boolean): void {
 export const log = {
   /** Informational message — only when debug logging is active. */
   info(...args: unknown[]): void {
-    if (debugEnabled) console.log(PREFIX, ...args);
+    // Uses console.debug (not console.log) so the console stays clean by
+    // default; info/debug output only appears when debug logging is enabled.
+    if (debugEnabled) console.debug(PREFIX, ...args);
   },
   /** Detailed debug message — only when debug logging is active. */
   debug(...args: unknown[]): void {

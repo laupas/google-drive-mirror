@@ -1,4 +1,5 @@
 import { Notice, TFile, TFolder, Vault, normalizePath } from "obsidian";
+import type { FileManager } from "obsidian";
 import { GoogleDriveClient } from "./drive-client";
 import { LocalFile, reconcile, reconcileFolders } from "./reconciler";
 import { SyncStateStore } from "./sync-state";
@@ -106,8 +107,24 @@ export class SyncEngine {
     private state: SyncStateStore,
     private target: SyncTarget,
     private status: SyncStatus,
-    private siblingLocalFolders: () => string[] = () => []
+    private siblingLocalFolders: () => string[] = () => [],
+    private fileManager?: FileManager
   ) {}
+
+  /**
+   * Moves a local file/folder to the trash, respecting the user's deletion
+   * preference. Prefers `FileManager.trashFile()` (honors the vault's
+   * "Deleted files" setting: vault `.trash`, system trash, or permanent);
+   * falls back to `Vault.trash(file, false)` (vault `.trash`) when no
+   * FileManager is available (e.g. in tests).
+   */
+  private async trashFile(file: TFile | TFolder): Promise<void> {
+    if (this.fileManager) {
+      await this.fileManager.trashFile(file);
+    } else {
+      await this.vault.trash(file, false);
+    }
+  }
 
   isRunning(): boolean {
     return this.running;
@@ -174,8 +191,8 @@ export class SyncEngine {
         // downloadable binary content -> always skip.
         if (isGoogleAppsFile(f.mimeType)) continue;
         const path = normalizePath(this.drive.pathOf(f));
-        // Never download system folders (.obsidian/.trash/…).
-        if (isSystemPath(path)) continue;
+        // Never download system folders (config dir / .trash / …).
+        if (isSystemPath(path, this.vault.configDir)) continue;
         // Optional file-extension filter (also applies to the Drive side).
         if (!this.extensionAllowed(path)) continue;
         // Ignore patterns (blacklist) — on both sides, see collectLocal().
@@ -229,7 +246,7 @@ export class SyncEngine {
       const collidingFolderPaths = new Set<string>();
       for (const folder of listing.folders) {
         const path = normalizePath(folder.relativePath);
-        if (isSystemPath(path)) continue;
+        if (isSystemPath(path, this.vault.configDir)) continue;
         if (this.isIgnored(path)) continue;
         if (this.isExcluded(path)) continue;
         if (remoteFolders.has(path)) {
@@ -748,9 +765,9 @@ export class SyncEngine {
       case "deleteLocalFolder": {
         const abs = this.toAbsolute(action.path);
         const folder = this.vault.getAbstractFileByPath(abs);
-        if (folder) {
-          // false = Obsidian .trash in the vault (not permanent).
-          await this.vault.trash(folder, false);
+        if (folder instanceof TFolder) {
+          // Respects the user's "Deleted files" preference.
+          await this.trashFile(folder);
         } else if (await this.vault.adapter.exists(abs)) {
           await this.vault.adapter.trashLocal(abs);
         }
@@ -826,16 +843,15 @@ export class SyncEngine {
   }
 
   /**
-   * Moves a local file into Obsidian's `.trash` folder in the vault
-   * (not into the system trash). `vault.trash(file, false)` = vault .trash.
-   * The adapter's `trashLocal` fallback also lands in the vault .trash.
+   * Moves a local file to the trash, respecting the user's deletion preference
+   * (via `trashFile()` → `FileManager.trashFile()`). The adapter's
+   * `trashLocal` fallback lands in the vault `.trash`.
    */
   private async trashLocal(relPath: string): Promise<void> {
     const abs = this.toAbsolute(relPath);
     const file = this.vault.getAbstractFileByPath(abs);
     if (file instanceof TFile) {
-      // false = Obsidian .trash in the vault (not permanently deleted).
-      await this.vault.trash(file, false);
+      await this.trashFile(file);
     } else if (await this.vault.adapter.exists(abs)) {
       await this.vault.adapter.trashLocal(abs);
     }
@@ -941,7 +957,7 @@ export class SyncEngine {
 
   /** Is the vault path in the configured sync folder (and not in a system folder)? */
   private inScope(vaultPath: string): boolean {
-    if (isSystemPath(vaultPath)) return false;
+    if (isSystemPath(vaultPath, this.vault.configDir)) return false;
     const prefix = this.folderPrefix();
     if (!prefix) return true; // whole vault
     return vaultPath === prefix.slice(0, -1) || vaultPath.startsWith(prefix);
@@ -1075,14 +1091,18 @@ function isGoogleAppsFile(mimeType: string): boolean {
 
 /**
  * Paths in system folders that must never be synced — above all the
- * Obsidian config folder (plugins, themes, settings, our own
- * sync state). Especially relevant when syncing the whole vault.
+ * Obsidian config folder (plugins, themes, settings, our own sync state).
+ * Especially relevant when syncing the whole vault. The config folder is not
+ * necessarily `.obsidian`; `configDir` carries the vault's actual value
+ * (`Vault#configDir`).
  */
-function isSystemPath(vaultPath: string): boolean {
+export function isSystemPath(vaultPath: string, configDir: string): boolean {
   const p = vaultPath.startsWith("/") ? vaultPath.slice(1) : vaultPath;
+  // Strip any leading "./" and trailing "/" from the configured folder.
+  const cfg = configDir.replace(/^\.\//, "").replace(/\/+$/, "");
   return (
-    p === ".obsidian" ||
-    p.startsWith(".obsidian/") ||
+    p === cfg ||
+    p.startsWith(`${cfg}/`) ||
     p === ".trash" ||
     p.startsWith(".trash/") ||
     p.split("/").pop() === ".DS_Store"

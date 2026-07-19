@@ -66,7 +66,7 @@ Data flow: `main.ts` wires everything up → `SyncEngine` orchestrates a run →
 |------|------|
 | `main.ts` | Plugin entry point. Holds one `SyncEngine`+`SyncStateStore` PER target (`runtimes` map, rebuilt on target changes), runs targets sequentially in `runSync()`, target CRUD (`addTarget`/`removeTarget`/`updateTarget`/`setDriveFolderForTarget`/`setLocalFolderForTarget`). Commands, ribbon, vault events (debounced upload), poll timer, login. |
 | `oauth.ts` | OAuth 2.0 with **PKCE** on both platforms. Desktop: **loopback flow** (Desktop app) — lazy-loads `oauth-loopback.ts` (the Node `http`/`net` server on `127.0.0.1:<port>` that catches the redirect). Mobile: **`obsidian://gdrive-auth`** redirect delivered via `registerObsidianProtocolHandler` (wired in `main.ts`) → `handleMobileRedirect()`. `effectiveClientId()` picks `settings.mobileClientId` on mobile (iOS/Android client, no secret) else `settings.clientId`. Token refresh directly against Google; `client_secret` sent only when present. |
-| `oauth-loopback.ts` | Desktop-only loopback server (`awaitLoopbackAuthCode`). Statically imports Node `http`/`net`; **only** imported via dynamic `import()` from `oauth.ts`'s desktop branch, so mobile never evaluates the `require("http")`. |
+| `oauth-loopback.ts` | Desktop-only loopback server (`awaitLoopbackAuthCode`). Loads Node `http`/`net` at RUNTIME via `require()` (types via `import type`, erased at compile time), so no static Node `import` exists; **only** imported via dynamic `import()` from `oauth.ts`'s desktop branch, so mobile never evaluates the `require("http")`. |
 | `md5.ts` | Pure-JS MD5 (`md5Hex(ArrayBuffer)`) replacing Node `crypto` — works on mobile. Output byte-identical to Node's, guarded by known-vector tests. |
 | `drive-client.ts` | Google Drive REST API v3 (list/download/upload/trash/search/folder). |
 | `sync-engine.ts` | Operates on ONE `SyncTarget` (+ a `siblingLocalFolders()` provider for cross-target exclusion). Collects the local state (MD5 hash), fetches the Drive state, filters, executes actions, updates the sync base. |
@@ -146,10 +146,12 @@ sync-state, sync-status, drive-client, oauth, i18n), `test/integration/` (sync-e
   them to pick a subfolder. A freshly added target defaults to `localFolder === ""` but
   syncs nothing until a Drive folder is set, and its toggle is locked off when a whole-vault
   target already exists.
-- **System-path exclusion (`isSystemPath` in sync-engine.ts):** `.obsidian/*`, `.trash/*`,
-  and `.DS_Store` are excluded on **both** sides (local collection AND remote import), so
-  that a full sync doesn't include the config folder / our own state. `main.isInScope()`
-  filters the same paths for the auto-sync events.
+- **System-path exclusion (`isSystemPath(path, configDir)` in sync-engine.ts):** the
+  config folder (from `Vault#configDir` — **not** hardcoded `.obsidian`, since the user can
+  rename it), `.trash/*`, and `.DS_Store` are excluded on **both** sides (local collection
+  AND remote import), so that a full sync doesn't include the config folder / our own state.
+  `main.isInScope()` filters the same paths (also via `vault.configDir`) for the auto-sync
+  events.
 - **Trashed Drive files:** `listChildren()` already filters via the query `trashed = false`.
   A trashed file is therefore absent from `remote` and, with an existing base, treated as
   "deleted remotely" (reconciler case 7).
@@ -206,9 +208,12 @@ sync-state, sync-status, drive-client, oauth, i18n), `test/integration/` (sync-e
   a **deletion always loses against an edit** on the other side (cases 6/7), to avoid data
   loss.
 - **Deletions → trash**, never hard: Drive via `trashFile` (`trashed: true`), locally via
-  `vault.trash(file, false)` resp. `adapter.trashLocal(path)` — Obsidian's **`.trash`
-  folder in the vault** (not the system trash), so deleted files remain recoverable inside
-  the vault. Applies to files AND folders.
+  the engine's `trashFile()` helper → **`FileManager.trashFile()`** (respects the user's
+  "Deleted files" preference: vault `.trash`, system trash, or permanent), with a
+  `vault.trash(file, false)` fallback when no `FileManager` is injected (e.g. in tests), and
+  `adapter.trashLocal(path)` for paths without a loaded `TFile`/`TFolder`. The engine takes
+  an optional `FileManager` ctor arg (`main.ts` passes `app.fileManager`). Applies to files
+  AND folders. Covered by an integration test asserting `FileManager.trashFile` is preferred.
 - **Filter (`extensionAllowed` + `isGoogleAppsFile` in `sync-engine.ts`):** Google Editors
   files (`application/vnd.google-apps.*` → Docs/Sheets/Slides/folders) are **always**
   skipped, since they aren't downloadable as binary files (otherwise 403

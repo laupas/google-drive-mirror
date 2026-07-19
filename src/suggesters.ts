@@ -77,10 +77,10 @@ export class DriveFolderSuggest extends AbstractInputSuggest<DriveFolderHit> {
   }
 
   renderSuggestion(folder: DriveFolderHit, el: HTMLElement): void {
-    const title = el.createEl("div", { text: folder.name });
+    const title = el.createDiv({ text: folder.name });
     if (folder.driveId) {
       // Visibly mark Shared Drive folders.
-      title.createEl("span", {
+      title.createSpan({
         text: t("suggestSharedDriveBadge"),
         cls: "gds-suggest-badge",
       });

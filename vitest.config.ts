@@ -6,6 +6,8 @@ export default defineConfig({
     // Node-Umgebung: Der Plugin-Code nutzt Node-Module (crypto, http).
     environment: "node",
     include: ["test/**/*.test.ts"],
+    // Provide a minimal `window` shim (the plugin uses window.setTimeout etc.).
+    setupFiles: ["test/setup.ts"],
     globals: false,
   },
   resolve: {

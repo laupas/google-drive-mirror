@@ -75,10 +75,10 @@ export class SyncStatus {
   private scheduleSave(): void {
     if (!this.storage) return;
     if (this.saveHandle !== null) return; // already scheduled
-    this.saveHandle = setTimeout(() => {
+    this.saveHandle = window.setTimeout(() => {
       this.saveHandle = null;
       void this.save();
-    }, 1000) as unknown as number;
+    }, 1000);
   }
 
   async save(): Promise<void> {

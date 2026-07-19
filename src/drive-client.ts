@@ -49,6 +49,17 @@ export type RequestFn = (params: {
   throw?: boolean;
 }) => Promise<DriveResponse>;
 
+/** Default HTTP implementation: Obsidian's `requestUrl`, mapped to `RequestFn`. */
+const defaultRequestImpl: RequestFn = async (params) => {
+  const resp = await requestUrl(params);
+  return {
+    status: resp.status,
+    text: resp.text,
+    json: resp.json,
+    arrayBuffer: resp.arrayBuffer,
+  };
+};
+
 export class GoogleDriveClient {
   /**
    * @param oauth    Token provider.
@@ -57,7 +68,7 @@ export class GoogleDriveClient {
    */
   constructor(
     private oauth: OAuthManager,
-    private requestImpl: RequestFn = requestUrl as unknown as RequestFn
+    private requestImpl: RequestFn = defaultRequestImpl
   ) {}
 
   private async authHeader(): Promise<Record<string, string>> {
@@ -96,7 +107,7 @@ export class GoogleDriveClient {
       }
     }
     // Unreachable, but for TS completeness.
-    throw lastErr ?? new Error("request failed");
+    throw lastErr instanceof Error ? lastErr : new Error("request failed");
   }
 
   /**
@@ -583,5 +594,5 @@ function backoffMs(attempt: number): number {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

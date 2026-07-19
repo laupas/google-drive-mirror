@@ -241,7 +241,7 @@ export class OAuthManager {
         this.pendingMobile.reject(new Error(t("oauthTimeout")));
       }
 
-      const timeout = setTimeout(() => {
+      const timeout = window.setTimeout(() => {
         if (this.pendingMobile?.state === state) {
           this.pendingMobile = null;
           reject(new Error(t("oauthTimeout")));
@@ -251,11 +251,11 @@ export class OAuthManager {
       this.pendingMobile = {
         state,
         resolve: ({ code }) => {
-          clearTimeout(timeout);
+          window.clearTimeout(timeout);
           resolve({ code, redirectUri: MOBILE_REDIRECT_URI });
         },
         reject: (e) => {
-          clearTimeout(timeout);
+          window.clearTimeout(timeout);
           reject(e);
         },
       };

@@ -55,12 +55,14 @@ export class SettingsTab extends PluginSettingTab {
     this.treeDescSettings.clear();
     const s = this.plugin.settings;
 
-    containerEl.createEl("h2", { text: t("settingsTitle") });
+    new Setting(containerEl).setName(t("settingsTitle")).setHeading();
 
     // ---- 1. Google Cloud app ----
-    containerEl.createEl("h3", { text: t("headingCloudAccess") });
-    const help = containerEl.createEl("p", { cls: "setting-item-description" });
-    help.appendText(t("cloudHelp"));
+    new Setting(containerEl).setName(t("headingCloudAccess")).setHeading();
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: t("cloudHelp"),
+    });
 
     new Setting(containerEl)
       .setName(t("clientIdName"))
@@ -136,7 +138,7 @@ export class SettingsTab extends PluginSettingTab {
       });
 
     // ---- 2. Sync targets ----
-    containerEl.createEl("h3", { text: t("headingTargets") });
+    new Setting(containerEl).setName(t("headingTargets")).setHeading();
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: t("targetsHelp"),
@@ -164,7 +166,7 @@ export class SettingsTab extends PluginSettingTab {
     );
 
     // ---- 3. Auto-sync ----
-    containerEl.createEl("h3", { text: t("headingAutoSync") });
+    new Setting(containerEl).setName(t("headingAutoSync")).setHeading();
 
     new Setting(containerEl)
       .setName(t("autoSyncEnabledName"))
@@ -222,7 +224,7 @@ export class SettingsTab extends PluginSettingTab {
       );
 
     // ---- 4. Actions & status ----
-    containerEl.createEl("h3", { text: t("headingActionsStatus") });
+    new Setting(containerEl).setName(t("headingActionsStatus")).setHeading();
 
     const lastSync = this.plugin.getLastSyncMs();
     const syncSetting = new Setting(containerEl)
@@ -388,10 +390,12 @@ export class SettingsTab extends PluginSettingTab {
               if (val) this.pendingSubfolder.delete(id);
               await this.plugin.setLocalFolderForTarget(id, val);
             });
-          new LocalFolderSuggest(this.app, c.inputEl, async (path) => {
-            this.pendingSubfolder.delete(id);
-            await this.plugin.setLocalFolderForTarget(id, path);
-            this.display();
+          new LocalFolderSuggest(this.app, c.inputEl, (path) => {
+            void (async () => {
+              this.pendingSubfolder.delete(id);
+              await this.plugin.setLocalFolderForTarget(id, path);
+              this.display();
+            })();
           });
         });
     }
@@ -423,14 +427,16 @@ export class SettingsTab extends PluginSettingTab {
           c.inputEl,
           this.plugin.drive,
           () => this.plugin.oauth.isConfigured(),
-          async (folder) => {
-            await this.plugin.setDriveFolderForTarget(
-              id,
-              folder.id,
-              folder.name,
-              folder.driveId
-            );
-            this.display();
+          (folder) => {
+            void (async () => {
+              await this.plugin.setDriveFolderForTarget(
+                id,
+                folder.id,
+                folder.name,
+                folder.driveId
+              );
+              this.display();
+            })();
           }
         );
       })

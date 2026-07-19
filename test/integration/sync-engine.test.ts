@@ -395,6 +395,53 @@ describe("SyncEngine.sync — Löschung remote propagieren", () => {
     expect(vault.has("x.md")).toBe(false);
     expect(store.get("x.md")).toBeUndefined();
   });
+
+  it("uses FileManager.trashFile (deletion preference) when a FileManager is provided", async () => {
+    // Arrange: file known in the base, present locally, gone remotely.
+    const md5 = md5Hex("stabiler inhalt");
+    const vault = new FakeVault();
+    const drive = new FakeDriveClient();
+    const storage = new FakeStorage();
+    const store = new SyncStateStore(storage.asStorage(), () => "test-scope");
+    store.set({
+      path: "x.md",
+      local: true,
+      remote: true,
+      isFolder: false,
+      driveId: "d-x",
+      md5,
+      size: 14,
+      localMtime: 1_000,
+      remoteMtime: 1_000,
+    });
+    vault.seed("x.md", "stabiler inhalt");
+
+    // A FileManager spy; the engine must prefer it over vault.trash().
+    const trashFile = vi.fn(async () => {});
+    const vaultTrash = vi.spyOn(vault, "trash");
+    const target: SyncTarget = {
+      ...newTarget("t1", "Test target"),
+      driveFolderId: "root",
+    };
+    const engine = new SyncEngine(
+      vault as never,
+      drive.asClient(),
+      store,
+      target,
+      new SyncStatus(),
+      () => [],
+      { trashFile } as never
+    );
+
+    // Act
+    const summary = await engine.sync(false);
+
+    // Assert: routed through FileManager.trashFile, NOT vault.trash().
+    expect(summary?.deletedLocal).toBe(1);
+    expect(trashFile).toHaveBeenCalledTimes(1);
+    expect(vaultTrash).not.toHaveBeenCalled();
+    expect(store.get("x.md")).toBeUndefined();
+  });
 });
 
 describe("SyncEngine.sync — Do not delete in Google Drive (neverDeleteRemote)", () => {

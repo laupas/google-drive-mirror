@@ -59,7 +59,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     // Mobile login redirect: Obsidian delivers obsidian://gdrive-auth back to
     // the plugin here (mobile can't run the desktop loopback server).
     this.registerObsidianProtocolHandler("gdrive-auth", (params) => {
-      this.oauth.handleMobileRedirect(params as Record<string, string>);
+      this.oauth.handleMobileRedirect(params);
     });
 
     this.storage = new PluginStorage(this.app.vault, this.manifest.id);
@@ -159,7 +159,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
         state,
         target,
         this.status,
-        () => this.siblingLocalFolders(target.id)
+        () => this.siblingLocalFolders(target.id),
+        this.app.fileManager
       );
       next.set(target.id, { engine, state });
     }
@@ -512,9 +513,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
    * trigger an auto-sync.
    */
   private isInScope(vaultPath: string): boolean {
-    // Never sync system folders (especially for the whole vault).
+    // Never sync system folders (especially for the whole vault). The config
+    // folder is not necessarily ".obsidian" — use Vault#configDir.
     const p = vaultPath.startsWith("/") ? vaultPath.slice(1) : vaultPath;
-    if (p === ".obsidian" || p.startsWith(".obsidian/")) return false;
+    const cfg = this.app.vault.configDir.replace(/^\.\//, "").replace(/\/+$/, "");
+    if (p === cfg || p.startsWith(`${cfg}/`)) return false;
     if (p === ".trash" || p.startsWith(".trash/")) return false;
 
     return this.settings.targets.some((target) =>

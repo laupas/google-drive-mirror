@@ -23,6 +23,8 @@ function toArrayBuffer(s: string): ArrayBuffer {
 export class FakeVault {
   private files = new Map<string, FakeEntry>();
   public adapter: FakeAdapter;
+  /** Mirrors Obsidian's Vault#configDir (default ".obsidian"). */
+  public configDir = ".obsidian";
 
   constructor() {
     this.adapter = new FakeAdapter(this.files);
