@@ -73,10 +73,18 @@ export interface SyncTarget {
 
 /** Persistent plugin settings (stored in data.json). */
 export interface PluginSettings {
-  /** OAuth client ID of the user's own Google Cloud app. */
+  /** OAuth client ID of the user's own Google Cloud app (Desktop client). */
   clientId: string;
-  /** OAuth client secret of the user's own Google Cloud app. */
+  /** OAuth client secret of the user's own Google Cloud app (Desktop client). */
   clientSecret: string;
+  /**
+   * OAuth client ID of an iOS/Android-type client, used only on mobile
+   * (Obsidian mobile can't run the loopback server). Empty on desktop-only
+   * setups. Such clients have NO secret; login uses PKCE + the obsidian://
+   * redirect. See MOBILE_REDIRECT_URI. When empty on mobile, login falls back
+   * to the desktop clientId (also fine — PKCE works without a secret).
+   */
+  mobileClientId: string;
   /** Long-lived refresh token from which access tokens are derived. */
   refreshToken: string;
 
@@ -206,6 +214,7 @@ export interface SyncSummary {
 export const DEFAULT_SETTINGS: PluginSettings = {
   clientId: "",
   clientSecret: "",
+  mobileClientId: "",
   refreshToken: "",
   targets: [],
   autoSyncEnabled: false,
@@ -233,3 +242,10 @@ export function newTarget(id: string, name: string): SyncTarget {
 
 /** OAuth scope: full Drive access, so that files created manually in Drive are also visible. */
 export const OAUTH_SCOPE = "https://www.googleapis.com/auth/drive";
+
+/**
+ * Redirect URI used on mobile. Obsidian delivers this back to the plugin via
+ * registerObsidianProtocolHandler("gdrive-auth", …). Must be registered as an
+ * authorized redirect URI on the user's iOS/Android OAuth client.
+ */
+export const MOBILE_REDIRECT_URI = "obsidian://gdrive-auth";

@@ -87,6 +87,19 @@ export class SettingsTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName(t("mobileClientIdName"))
+      .setDesc(t("mobileClientIdDesc"))
+      .addText((c) =>
+        c
+          .setPlaceholder("....apps.googleusercontent.com")
+          .setValue(s.mobileClientId)
+          .onChange(async (v) => {
+            s.mobileClientId = v.trim();
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
       .setName(t("loginName"))
       .setDesc(
         s.refreshToken ? t("loginDescSignedIn") : t("loginDescSignedOut")

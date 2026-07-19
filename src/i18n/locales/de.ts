@@ -37,6 +37,9 @@ export const de: Partial<Messages> = {
   clientIdDesc: "OAuth-2.0-Client-ID deiner Google-Cloud-App.",
   clientSecretName: "Client-Secret",
   clientSecretDesc: "OAuth-2.0-Client-Secret deiner Google-Cloud-App.",
+  mobileClientIdName: "Mobile-Client-ID",
+  mobileClientIdDesc:
+    "Nur für Mobilgeräte nötig: OAuth-Client-ID eines Clients vom Typ „Android/iOS“ (ohne Secret). Trage „obsidian://gdrive-auth“ als autorisierte Weiterleitungs-URI ein. Am Desktop leer lassen.",
   loginName: "Anmeldung",
   loginDescSignedIn:
     "✅ Angemeldet. Erneut anmelden, falls der Zugriff widerrufen wurde.",

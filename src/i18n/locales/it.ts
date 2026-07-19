@@ -37,6 +37,9 @@ export const it: Partial<Messages> = {
   clientIdDesc: "ID client OAuth 2.0 della tua app Google Cloud.",
   clientSecretName: "Client secret",
   clientSecretDesc: "Client secret OAuth 2.0 della tua app Google Cloud.",
+  mobileClientIdName: "Client ID mobile",
+  mobileClientIdDesc:
+    "Necessario solo su dispositivi mobili: client ID OAuth di un client di tipo “Android/iOS” (senza secret). Registra “obsidian://gdrive-auth” come URI di reindirizzamento autorizzato. Lascia vuoto su desktop.",
   loginName: "Accesso",
   loginDescSignedIn:
     "✅ Connesso. Accedi di nuovo se l'accesso è stato revocato.",
