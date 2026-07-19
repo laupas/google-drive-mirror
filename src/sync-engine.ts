@@ -15,8 +15,8 @@ import {
   SyncTarget,
 } from "./types";
 
-/** md5 from the Node crypto module (desktop-only plugin). */
-import { createHash } from "crypto";
+/** Pure-JS MD5 — works on desktop and mobile (no Node `crypto`). */
+import { md5Hex } from "./md5";
 
 /**
  * After this many executed (real) actions the sync state is
@@ -981,10 +981,6 @@ export class SyncEngine {
       remoteMtime: remote.modifiedTimeMs,
     };
   }
-}
-
-function md5Hex(buf: ArrayBuffer): string {
-  return createHash("md5").update(Buffer.from(buf)).digest("hex");
 }
 
 /** Path depth (number of "/" segments) — for folder sorting. */
