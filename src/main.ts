@@ -1,4 +1,4 @@
-import { Notice, Platform, Plugin, TAbstractFile, normalizePath } from "obsidian";
+import { Notice, Plugin, TAbstractFile, normalizePath } from "obsidian";
 import { GoogleDriveClient } from "./drive-client";
 import { OAuthManager } from "./oauth";
 import { SettingsTab } from "./settings-tab";
@@ -608,24 +608,14 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 /**
  * Opens an external URL in the SYSTEM browser, cross-platform.
  *
- * `window.open(url, "_blank")` opens the system browser on desktop (Electron),
- * but on mobile (iOS especially) it's a no-op inside Obsidian's WebView, which
- * left login hanging forever. On mobile we click a real anchor with
- * `target="_blank"` — Obsidian's mobile shell intercepts that and hands the URL
- * to the OS browser, from which Google can redirect back via obsidian://.
+ * CRITICAL: on Obsidian mobile (iOS especially), `window.open(url, "_blank")`
+ * is a no-op inside the WebView — as is an anchor click with `target="_blank"`.
+ * The form that actually hands the URL to Safari is `window.open(url)` with a
+ * SINGLE argument (no target). It works on desktop too, so there is no branch.
+ * (Verified against shipping mobile plugins, e.g. obsidian-google-calendar.)
  */
 function openExternal(url: string): void {
-  if (Platform.isDesktopApp) {
-    window.open(url, "_blank");
-    return;
-  }
-  const a = document.createElement("a");
-  a.href = url;
-  a.target = "_blank";
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  window.open(url);
 }
 
 /** Generates a short, collision-resistant target id (no crypto dependency). */
