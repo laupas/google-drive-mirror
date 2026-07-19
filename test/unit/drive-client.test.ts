@@ -203,6 +203,29 @@ describe("GoogleDriveClient — Fehlerbehandlung (assertOk)", () => {
   });
 });
 
+describe("GoogleDriveClient.downloadFile — binary, never parses JSON", () => {
+  it("returns the arrayBuffer without touching .json (mobile binary bug)", async () => {
+    // Arrange: mimic Obsidian mobile, where `.json` is a getter that throws a
+    // JSON parse error on binary bodies. downloadFile must never read it.
+    const c = client();
+    const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]); // "%PDF"
+    mockedRequestUrl.mockResolvedValue({
+      status: 200,
+      text: "%PDF-1.7…",
+      arrayBuffer: bytes.buffer,
+      get json(): unknown {
+        throw new SyntaxError("JSON Parse error: Unrecognized token '%'");
+      },
+    } as unknown as Awaited<ReturnType<typeof requestUrl>>);
+
+    // Act
+    const buf = await c.downloadFile("file-1");
+
+    // Assert: got the bytes, no JSON parse attempted.
+    expect(new Uint8Array(buf)).toEqual(bytes);
+  });
+});
+
 describe("GoogleDriveClient.getFolder — Typ-Guard", () => {
   it("liefert id/name/driveId für einen echten Ordner", async () => {
     // Arrange

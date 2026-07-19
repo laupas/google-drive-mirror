@@ -52,10 +52,17 @@ export type RequestFn = (params: {
 /** Default HTTP implementation: Obsidian's `requestUrl`, mapped to `RequestFn`. */
 const defaultRequestImpl: RequestFn = async (params) => {
   const resp = await requestUrl(params);
+  // IMPORTANT: `json` must be LAZY. `requestUrl`'s `.json` is a getter that
+  // JSON.parses the body; on mobile, touching it for a BINARY download
+  // (?alt=media returns raw bytes) throws "JSON Parse error: Unrecognized
+  // token" and every download fails. We only parse when a caller actually
+  // reads `.json` (JSON endpoints), never for binary downloads.
   return {
     status: resp.status,
     text: resp.text,
-    json: resp.json,
+    get json() {
+      return resp.json;
+    },
     arrayBuffer: resp.arrayBuffer,
   };
 };
