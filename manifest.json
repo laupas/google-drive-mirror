@@ -3,7 +3,7 @@
   "name": "Google Drive Mirror",
   "version": "0.1.0",
   "minAppVersion": "1.4.0",
-  "description": "Two-way sync between a vault folder and a Google Drive folder, with manual and automatic sync. Newer file wins on conflict; deletions go to trash.",
+  "description": "Sync multiple vault folders to multiple Google Drive folders, including Shared Drives. Each pairing syncs a subfolder or the whole vault two-way, mirrors the folder structure, and picks up files created directly in Drive.",
   "author": "Pascal Lauener",
   "isDesktopOnly": true,
   "fundingUrl": "https://buymeacoffee.com/llaaccssaapp"

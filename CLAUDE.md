@@ -11,9 +11,11 @@ Guide for working in this repository.
 
 ## Project
 
-Obsidian plugin for **two-way sync** between a vault (sub)folder and a Google Drive
-folder. Manual and automatic sync. Desktop-only (`manifest.json: isDesktopOnly: true`),
-since Node modules (`http`, `crypto`) are used.
+Obsidian plugin for **two-way sync** between vault (sub)folders and Google Drive
+folders. Supports **multiple sync targets** (each = one local (sub)folder ↔ one
+Drive folder, with its own filters and state); one target may be a whole-vault
+sync. Manual and automatic sync. Desktop-only (`manifest.json: isDesktopOnly:
+true`), since Node modules (`http`, `crypto`) are used.
 
 > 🛑 **Data-loss risk (core constraint):** The plugin deletes/overwrites on both sides.
 > The most dangerous class of bugs is "deletion propagated incorrectly". The only
@@ -58,18 +60,18 @@ Data flow: `main.ts` wires everything up → `SyncEngine` orchestrates a run →
 
 | File | Role |
 |------|------|
-| `main.ts` | Plugin entry point. Commands, ribbon, vault events (debounced upload), poll timer, login. |
+| `main.ts` | Plugin entry point. Holds one `SyncEngine`+`SyncStateStore` PER target (`runtimes` map, rebuilt on target changes), runs targets sequentially in `runSync()`, target CRUD (`addTarget`/`removeTarget`/`updateTarget`/`setDriveFolderForTarget`/`setLocalFolderForTarget`). Commands, ribbon, vault events (debounced upload), poll timer, login. |
 | `oauth.ts` | OAuth 2.0 **loopback flow** (Desktop app). Local HTTP server on `127.0.0.1:<port>` catches the redirect. Token refresh directly against Google. |
 | `drive-client.ts` | Google Drive REST API v3 (list/download/upload/trash/search/folder). |
-| `sync-engine.ts` | Collects the local state (MD5 hash), fetches the Drive state, filters, executes actions, updates the sync base. |
+| `sync-engine.ts` | Operates on ONE `SyncTarget` (+ a `siblingLocalFolders()` provider for cross-target exclusion). Collects the local state (MD5 hash), fetches the Drive state, filters, executes actions, updates the sync base. |
 | `reconciler.ts` | Pure functions `reconcile()` (files → `SyncAction[]`) and `reconcileFolders()` (folders → `FolderAction[]`). Deletion only if `b.local`/`b.remote`. Tested in `test/unit/reconciler.test.ts`. |
 | `storage.ts` | `PluginStorage`: reads/writes JSON files in the plugin config folder (`vault.configDir/plugins/<id>/`) via `vault.adapter`. |
-| `sync-state.ts` | `SyncStateStore` — the persistent "base" (per file/folder: `local`/`remote` flags, hash/mtime, `isFolder`) in its **own file** `sync-state.json` (not data.json). `load()`/`save()`; also holds `lastSyncMs` and a `scopeId`. |
+| `sync-state.ts` | `SyncStateStore` — the persistent "base" (per file/folder: `local`/`remote` flags, hash/mtime, `isFolder`) in its **own per-target file** `sync-state-<targetId>.json` (filename injected via ctor; `stateFileName()`/`isStateFile()` helpers; `destroy()` deletes it). `load()`/`save()`; also holds `lastSyncMs` and a `scopeId`. |
 | `sync-status.ts` | `SyncStatus`: observable live status (`phase`/`message`/`current`/`total`) + log, persisted in its **own file** `sync-log.json` with retention. Observer pattern via `subscribe()`. |
-| `settings-tab.ts` | Settings UI. Also contains `SyncLogModal` (live log) and the **sync tree** (`renderSyncTree`/`buildTree`, per-row checkboxes, auto-refresh after sync). The vault-folder field is hidden for "whole vault", otherwise required. |
+| `settings-tab.ts` | Settings UI. Renders the target list (`renderTarget` per target: name, Drive/local folder, filters, exclude-folders, delete behavior, and a per-target **sync tree** via `renderTreeNodes`/`buildTree`, per-row checkboxes, auto-refresh after sync), add/remove-target buttons, plus global OAuth/auto-sync/log sections. Also contains `SyncLogModal` (live log). The vault-folder field is hidden for "whole vault", otherwise required. |
 | `suggesters.ts` | `AbstractInputSuggest` autocomplete for local and Drive folders. |
 | `logger.ts` | Central `log` wrapper with prefix `[GDrive Sync]`. `info`/`debug` only when `settings.debugLogging` is active; `warn`/`error` always. Toggle via `setDebugLogging()`. |
-| `types.ts` | `PluginSettings`, `DEFAULT_SETTINGS`, `SyncStateEntry`, `DriveFile`, `DriveFolder`, `SyncAction`, `FolderAction`, `OAUTH_SCOPE`. |
+| `types.ts` | `SyncTarget`, `newTarget()`, `PluginSettings` (holds `targets: SyncTarget[]` + global OAuth/auto-sync/log fields), `DEFAULT_SETTINGS`, `SyncStateEntry`, `DriveFile`, `DriveFolder`, `SyncAction`, `FolderAction`, `OAUTH_SCOPE`. |
 | `i18n/` | `index.ts`: `t(key, params?)` translation function + `detectLocale()`/`initLocale()`. `locales/{en,de,it,fr}.ts`: message dicts. See **i18n** below. |
 
 **Tests (`test/`):** vitest, Node environment. `test/unit/` (reconciler, reconcile-folders,
@@ -98,11 +100,33 @@ sync-state, sync-status, drive-client, oauth, i18n), `test/integration/` (sync-e
   maps via `relativePath` (not via the Drive-ID hierarchy). `appProperties.obsidianPath`
   (`PATH_PROP`) is still written on upload but is only a fallback now — the truth is the
   actual folder structure.
-- **Scope "whole vault" vs. subfolder:** `settings.localFolder === ""` means **whole
+- **Multiple sync targets:** `settings.targets` is a `SyncTarget[]`. Each target has its
+  own `id`, Drive folder, `localFolder`, filters (`allowedExtensions`/`ignorePatterns`/
+  `excludeFolders`), `neverDeleteRemote`, and its **own sync base file** (`sync-state-<id>.
+  json`). All targets share the **same OAuth account** (global `clientId`/`clientSecret`/
+  `refreshToken`). `main.ts` builds one `SyncEngine`+`SyncStateStore` per target
+  (`rebuildRuntimes()`) and runs them **sequentially** in `runSync()` (a shared `running`
+  flag serializes; parallel targets would fight over event suppression and Drive rate
+  limits). Removing a target deletes its state file (`SyncStateStore.destroy()`); orphaned
+  `sync-state-*.json` of no-longer-configured targets are cleaned up on load
+  (`cleanupOrphanStateFiles()`). **No migration** from the old single-target layout — the
+  legacy fields are stripped from data.json on load (`stripLegacyFields`) and the user
+  reconfigures targets; the reconciler's deletion safety means a fresh base never deletes.
+- **Cross-target folder exclusion (`SyncTarget.excludeFolders` + `siblingLocalFolders`):**
+  So a subfolder owned by one target is never mirrored into a second Drive by a whole-vault
+  target, every engine excludes (a) the local folders of ALL OTHER targets and (b) the
+  target's own manual `excludeFolders`. The engine combines both into a frozen
+  `active.excludeFolders` per run (`computeExcludeFolders()`, sibling folders mapped to
+  sync-relative) and applies `isExcluded()` on **BOTH sides** (local + Drive, files +
+  folders) exactly like the ignore filter — so an excluded path is never seen as "deleted
+  on one side" (deletion-safety, covered by an integration test). Also honored in
+  `main.isInScope()`/`inTargetScope()` so an excluded path doesn't trigger auto-sync.
+- **Scope "whole vault" vs. subfolder:** `target.localFolder === ""` means **whole
   vault**; a set path restricts to that subfolder. The "Sync entire vault" UI toggle in
-  `settings-tab.ts` switches this. A scope change goes through `plugin.setLocalFolder()`,
-  which **resets the sync base** on change (analogous to `setDriveFolder`).
-  `vault.getFiles()` returns only vault files anyway (`.obsidian` is never included).
+  `settings-tab.ts` switches this per target. A scope change goes through
+  `plugin.setLocalFolderForTarget()`, which **resets that target's sync base** on change
+  (analogous to `setDriveFolderForTarget`). `vault.getFiles()` returns only vault files
+  anyway (`.obsidian` is never included).
 - **System-path exclusion (`isSystemPath` in sync-engine.ts):** `.obsidian/*`, `.trash/*`,
   and `.DS_Store` are excluded on **both** sides (local collection AND remote import), so
   that a full sync doesn't include the config folder / our own state. `main.isInScope()`
@@ -121,11 +145,13 @@ sync-state, sync-status, drive-client, oauth, i18n), `test/integration/` (sync-e
   This prevents the catastrophe "empty/copied/foreign state empties the Drive". A new entry
   after upload/download always has `local=true, remote=true` (`entryFrom`/`folderEntry` in
   `sync-engine.ts`).
-- **Scope binding of the base (`scopeId`):** `sync-state.json` stores a `scopeId` =
-  `vault name :: Drive folder ID :: local folder`. If it doesn't match on load (e.g. the
-  file was copied from another vault), the base is **discarded** → everything is
-  reconciled fresh (download/upload), never deleted.
-- **"Do not delete in Google Drive" (`settings.neverDeleteRemote`, default off):** When on,
+- **Scope binding of the base (`scopeId`):** each `sync-state-<id>.json` stores a `scopeId`
+  = `vault name :: target id :: Drive folder ID :: local folder`. If it doesn't match on
+  load (e.g. the file was copied from another vault), the base is **discarded** →
+  everything is reconciled fresh (download/upload), never deleted. The `target id`
+  component keeps the scope unique even if two targets happen to share the same Drive/local
+  folder.
+- **"Do not delete in Google Drive" (`target.neverDeleteRemote`, default off):** When on,
   a local deletion is NOT propagated as `deleteRemote` but as `keepRemoteDropLocal`: the
   Drive file stays, and the base entry is set to `local=false, remote=true, keptRemoteOnly=
   true`. The `keptRemoteOnly` flag is what distinguishes "deliberately Drive-only" from a
@@ -146,10 +172,12 @@ sync-state, sync-status, drive-client, oauth, i18n), `test/integration/` (sync-e
   **checked = exists locally** (normal entries: checked + disabled, status only);
   **unchecked = `keptRemoteOnly`** (checking calls `plugin.restoreRemoteOnly(path)` → clears
   the flag → next sync downloads it, Fall 3). The tree lives in a stable container (`treeEl`)
-  that `refreshSyncTree()` repopulates without a full settings re-render — called on the
-  status subscription when a sync finishes (running→idle) and via the refresh button.
-  `plugin.getSyncEntries()` supplies all entries; `buildTree` is unit-tested in
-  `test/unit/build-tree.test.ts`.
+  that `refreshTree(id)` repopulates without a full settings re-render — called on the
+  status subscription when a sync finishes (`refreshAllTrees()`) and via the refresh
+  button. There is **one tree per target** (`treeEls`/`treeDescSettings` keyed by target
+  id); `plugin.getSyncEntries(id)` supplies a target's entries and
+  `plugin.restoreRemoteOnly(id, path)` clears its keptRemoteOnly flag. `buildTree` is
+  unit-tested in `test/unit/build-tree.test.ts`.
 - **Folder tracking:** Folders are tracked explicitly in the state (`isFolder=true`, own
   `local`/`remote` flags). `listFiles()` returns `{ files, folders }`; `reconcileFolders()`
   mirrors the file deletion logic. Order in the engine: CREATE folders before files
@@ -166,10 +194,10 @@ sync-state, sync-status, drive-client, oauth, i18n), `test/integration/` (sync-e
   files (`application/vnd.google-apps.*` → Docs/Sheets/Slides/folders) are **always**
   skipped, since they aren't downloadable as binary files (otherwise 403
   `fileNotDownloadable`). Additionally an optional file-extension whitelist filter
-  (`settings.allowedExtensions`, comma-separated, empty = all). Both filters apply to
+  (`target.allowedExtensions`, comma-separated, empty = all). Both filters apply to
   **local AND Drive side**, so the reconciler doesn't misinterpret a filtered file as
   "deleted on one side".
-- **Ignore filter (`settings.ignorePatterns` + `src/ignore.ts`):** Blacklist complementary
+- **Ignore filter (`target.ignorePatterns` + `src/ignore.ts`):** Blacklist complementary
   to `allowedExtensions`. Comma-separated patterns; supports plain extensions (`tmp`,
   `.log`), exact filenames (`.DS_Store`), and glob patterns (`*.tmp`, `drafts/*`,
   `**/node_modules/**` — `*`/`?` don't cross `/`, `**` does). Patterns without `/` match the
@@ -197,27 +225,30 @@ sync-state, sync-status, drive-client, oauth, i18n), `test/integration/` (sync-e
 
 ## Persistence split (important)
 
-Three separate files in the plugin folder (`.obsidian/plugins/google-drive-mirror/`):
-- **`data.json`** — only the `PluginSettings` (small, rarely changed: credentials, folders,
-  auto-sync/filter/retention options). Via `loadData()`/`saveData()`.
-- **`sync-state.json`** — the sync base (per file/folder: `local`/`remote` flags,
-  hash/mtime, `isFolder`, `driveId`) + `lastSyncMs` + `scopeId`. Via `SyncStateStore` +
-  `PluginStorage`. Rewritten on every sync; grows with the number of files — hence
-  deliberately NOT in data.json. If the `scopeId` doesn't match on load (file copied from
-  another vault), the base is discarded.
-- **`sync-log.json`** — the sync log. Via `SyncStatus` + `PluginStorage`, saved debounced,
-  with retention (`settings.logRetentionHours`, default 24h, 0 = never).
+Files in the plugin folder (`.obsidian/plugins/google-drive-mirror/`):
+- **`data.json`** — only the `PluginSettings` (global credentials, the `targets` array with
+  each target's folders/filters, auto-sync/retention options). Via `loadData()`/`saveData()`.
+- **`sync-state-<targetId>.json`** — the sync base of ONE target (per file/folder:
+  `local`/`remote` flags, hash/mtime, `isFolder`, `driveId`) + `lastSyncMs` + `scopeId`.
+  Via `SyncStateStore` (filename injected) + `PluginStorage`. Rewritten on every sync of
+  that target; grows with the number of files — hence deliberately NOT in data.json. If the
+  `scopeId` doesn't match on load (file copied from another vault), that target's base is
+  discarded. Orphaned files of removed targets are deleted on load
+  (`cleanupOrphanStateFiles()`); removing a target deletes its file (`destroy()`).
+- **`sync-log.json`** — the (shared) sync log. Via `SyncStatus` + `PluginStorage`, saved
+  debounced, with retention (`settings.logRetentionHours`, default 24h, 0 = never).
 
-Settings fields include: `debugLogging` (debug console), `logRetentionHours`,
-`allowedExtensions`, auto-sync options. **No** bulk-deletion threshold anymore — deletion
+Global settings fields: `clientId`/`clientSecret`/`refreshToken`, `debugLogging`,
+`logRetentionHours`, auto-sync options. Per-target fields (filters, folders,
+`neverDeleteRemote`) live on each `SyncTarget`. **No** bulk-deletion threshold — deletion
 safety sits entirely in the reconciler (local/remote flags).
 
-**Migration:** `loadSettings()` returns the raw data.json data; `onload()` passes any old
-`syncState`/`lastSyncMs` still sitting there (from versions before the split) to
-`SyncStateStore.load(migrateFrom)`, which transfers it once into `sync-state.json`.
-`loadSettings()` deletes the legacy fields from the settings object so they don't land in
-data.json again on the next `saveData`. `lastSyncMs` now lives in the state store —
-accessed via `plugin.getLastSyncMs()`.
+**No migration** from the pre-multi-target layout: `loadSettings()` strips the legacy
+single-target fields (`driveFolderId`/`localFolder`/`allowedExtensions`/…) and the old
+`syncState`/`lastSyncMs` from data.json (`stripLegacyFields`), so they aren't written back.
+The user reconfigures targets; the reconciler's deletion safety means a fresh base only
+downloads/uploads, never deletes. `lastSyncMs` lives per-target in each state store;
+`plugin.getLastSyncMs()` returns the max across targets.
 
 ## Status & log (sync-status.ts)
 

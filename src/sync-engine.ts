@@ -9,10 +9,10 @@ import { isIgnored, parseIgnorePatterns } from "./ignore";
 import {
   DriveFile,
   FolderAction,
-  PluginSettings,
   SyncAction,
   SyncStateEntry,
   SyncSummary,
+  SyncTarget,
 } from "./types";
 
 /** md5 from the Node crypto module (desktop-only plugin). */
@@ -44,6 +44,14 @@ interface ScopeSnapshot {
   allowedExtensions: string;
   /** Pre-parsed ignore patterns (blacklist) for the duration of the run. */
   ignorePatterns: string[];
+  /**
+   * Sync-relative folder prefixes that are excluded from THIS target for the
+   * duration of the run. Combines the user's `excludeFolders` with the local
+   * folders of all OTHER targets (so a whole-vault target does not also sync a
+   * subfolder that another target owns). A path is excluded if it equals one of
+   * these or lies under it (prefix + "/"). Applied on BOTH sides.
+   */
+  excludeFolders: string[];
 }
 
 /** Empty scope snapshot (before the first run). */
@@ -54,6 +62,7 @@ function emptyScope(): ScopeSnapshot {
     localFolder: "",
     allowedExtensions: "",
     ignorePatterns: [],
+    excludeFolders: [],
   };
 }
 
@@ -74,20 +83,30 @@ export class SyncEngine {
   private running = false;
 
   /**
-   * Snapshot of the scope-relevant settings fields for the duration of ONE run.
-   * `settings` is a mutable object shared by main.ts/OAuth/SettingsTab —
-   * a folder change in the middle of a run would otherwise take effect live
-   * (e.g. the `localFolder` prefix changes between collectLocal and
-   * applyAction → paths no longer match). Set in sync().
+   * Snapshot of the scope-relevant target fields for the duration of ONE run.
+   * `target` is a mutable object shared with main.ts/SettingsTab — a folder
+   * change in the middle of a run would otherwise take effect live (e.g. the
+   * `localFolder` prefix changes between collectLocal and applyAction → paths
+   * no longer match). Set in sync().
    */
   private active: ScopeSnapshot = emptyScope();
 
+  /**
+   * @param target                The sync target this engine operates on.
+   * @param siblingLocalFolders   Returns the vault-relative local folders of
+   *                              all OTHER targets. They are excluded from this
+   *                              target's scope so a subfolder owned by another
+   *                              target is never synced into two Drives (mainly
+   *                              relevant for a whole-vault target). Evaluated
+   *                              once per run and frozen into the snapshot.
+   */
   constructor(
     private vault: Vault,
     private drive: GoogleDriveClient,
     private state: SyncStateStore,
-    private settings: PluginSettings,
-    private status: SyncStatus
+    private target: SyncTarget,
+    private status: SyncStatus,
+    private siblingLocalFolders: () => string[] = () => []
   ) {}
 
   isRunning(): boolean {
@@ -102,7 +121,7 @@ export class SyncEngine {
     if (this.running) {
       return null;
     }
-    if (!this.settings.driveFolderId) {
+    if (!this.target.driveFolderId) {
       if (showNotice) new Notice(t("engineNoDriveFolder"));
       return null;
     }
@@ -110,11 +129,12 @@ export class SyncEngine {
     this.running = true;
     // Freeze the scope fields for the entire runtime (see `active`).
     this.active = {
-      driveFolderId: this.settings.driveFolderId,
-      driveSharedId: this.settings.driveSharedId,
-      localFolder: this.settings.localFolder,
-      allowedExtensions: this.settings.allowedExtensions,
-      ignorePatterns: parseIgnorePatterns(this.settings.ignorePatterns),
+      driveFolderId: this.target.driveFolderId,
+      driveSharedId: this.target.driveSharedId,
+      localFolder: this.target.localFolder,
+      allowedExtensions: this.target.allowedExtensions,
+      ignorePatterns: parseIgnorePatterns(this.target.ignorePatterns),
+      excludeFolders: this.computeExcludeFolders(),
     };
     const summary: SyncSummary = {
       uploaded: 0,
@@ -160,6 +180,8 @@ export class SyncEngine {
         if (!this.extensionAllowed(path)) continue;
         // Ignore patterns (blacklist) — on both sides, see collectLocal().
         if (this.isIgnored(path)) continue;
+        // Excluded folders (other targets' scopes + user excludeFolders).
+        if (this.isExcluded(path)) continue;
         const list = remoteByPath.get(path);
         if (list) list.push(f);
         else remoteByPath.set(path, [f]);
@@ -209,6 +231,7 @@ export class SyncEngine {
         const path = normalizePath(folder.relativePath);
         if (isSystemPath(path)) continue;
         if (this.isIgnored(path)) continue;
+        if (this.isExcluded(path)) continue;
         if (remoteFolders.has(path)) {
           collidingFolderPaths.add(path);
           continue;
@@ -246,13 +269,13 @@ export class SyncEngine {
         local,
         remote,
         base,
-        neverDeleteRemote: this.settings.neverDeleteRemote,
+        neverDeleteRemote: this.target.neverDeleteRemote,
       });
       const folderActions = reconcileFolders({
         local: localFolders,
         remote: remoteFolders,
         base: folderBase,
-        neverDeleteRemote: this.settings.neverDeleteRemote,
+        neverDeleteRemote: this.target.neverDeleteRemote,
       });
 
       // Only count "real" actions (noop not as a progress step).
@@ -589,6 +612,8 @@ export class SyncEngine {
       const rel = this.toRelative(file.path, prefix);
       // Ignore patterns check the SYNC-RELATIVE path (like the Drive side).
       if (this.isIgnored(rel)) continue;
+      // Excluded folders (other targets' scopes + user excludeFolders).
+      if (this.isExcluded(rel)) continue;
 
       const mtimeMs = file.stat.mtime;
       const size = file.stat.size;
@@ -655,7 +680,7 @@ export class SyncEngine {
       if (f.isRoot()) continue;
       if (!this.inScope(f.path)) continue;
       const rel = this.toRelative(f.path, prefix);
-      if (rel && !this.isIgnored(rel)) result.add(rel);
+      if (rel && !this.isIgnored(rel) && !this.isExcluded(rel)) result.add(rel);
     }
     return result;
   }
@@ -858,6 +883,52 @@ export class SyncEngine {
    */
   private isIgnored(path: string): boolean {
     return isIgnored(path, this.active.ignorePatterns);
+  }
+
+  /**
+   * Combines the excluded folder prefixes for this run: the user's
+   * `excludeFolders` plus the local folders of all OTHER targets, each
+   * normalized to a sync-relative folder path (this target's prefix stripped).
+   * A sibling folder outside this target's scope is dropped (it cannot collide).
+   * Evaluated once per run and frozen into the snapshot.
+   */
+  private computeExcludeFolders(): string[] {
+    const prefix = this.folderPrefix();
+    const result = new Set<string>();
+
+    const add = (vaultRel: string) => {
+      const norm = normalizePath(vaultRel.trim());
+      if (!norm) return;
+      // Restrict to this target's scope: for a subfolder target keep only
+      // siblings that live INSIDE this folder (strip the prefix). A whole-vault
+      // target (empty prefix) keeps everything as-is.
+      if (!prefix) {
+        result.add(norm);
+      } else if (norm === prefix.slice(0, -1) || norm.startsWith(prefix)) {
+        const rel = this.toRelative(norm, prefix);
+        if (rel) result.add(rel);
+      }
+    };
+
+    for (const sib of this.siblingLocalFolders()) add(sib);
+    // User-provided excludeFolders are already sync-relative to this target.
+    for (const raw of this.target.excludeFolders.split(",")) {
+      const norm = normalizePath(raw.trim());
+      if (norm) result.add(norm);
+    }
+    return [...result];
+  }
+
+  /**
+   * Is the sync-relative path under one of the excluded folders? Applied on
+   * BOTH sides (local + Drive, files + folders), like `isIgnored`, so an
+   * excluded path is never seen as "deleted on one side".
+   */
+  private isExcluded(path: string): boolean {
+    for (const ex of this.active.excludeFolders) {
+      if (path === ex || path.startsWith(ex + "/")) return true;
+    }
+    return false;
   }
 
   /** Folder prefix incl. trailing "/" ("" if whole vault). */

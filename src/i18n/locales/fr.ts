@@ -25,6 +25,8 @@ export const fr: Partial<Messages> = {
   noticeSignInFirst:
     "Google Drive Mirror : Veuillez d'abord vous connecter dans les paramètres.",
   noticeLoginSuccess: "Google Drive Mirror : Connecté, jeton enregistré.",
+  noticeNoTargets:
+    "Google Drive Mirror : Aucune cible de synchronisation configurée. Ajoutez-en une dans les paramètres.",
 
   // ---- Paramètres : titres & Google Cloud ----
   settingsTitle: "Google Drive Mirror",
@@ -46,6 +48,23 @@ export const fr: Partial<Messages> = {
   logoutTooltip: "Se déconnecter (supprimer le jeton)",
 
   // ---- Paramètres : dossiers ----
+  // ---- Paramètres : cibles de synchronisation ----
+  headingTargets: "2. Cibles de synchronisation",
+  targetsHelp:
+    "Chaque cible synchronise un (sous-)dossier local avec un dossier Google Drive. Une cible « tout le coffre » exclut automatiquement les dossiers locaux des autres cibles, afin qu'un sous-dossier ne soit jamais copié dans deux Drive à la fois.",
+  targetsEmpty: "Aucune cible pour l'instant. Ajoutez-en une ci-dessous.",
+  targetAddButton: "Ajouter une cible",
+  targetDefaultName: "Cible {index}",
+  targetNameName: "Nom",
+  targetNameDesc: "Un libellé pour cette cible (affiché ici uniquement).",
+  targetNamePlaceholder: "p. ex. Notes de travail",
+  targetRemoveTooltip:
+    "Supprimer cette cible (conserve les fichiers, réinitialise la base de synchronisation)",
+  excludeFoldersName: "Dossiers exclus",
+  excludeFoldersDesc:
+    "Liste de dossiers (relatifs au coffre), séparés par des virgules, à exclure de cette cible (en plus des autres cibles, exclues automatiquement). S'applique aux deux côtés. Vide = rien de plus.",
+  excludeFoldersPlaceholder: "Archives, Privé/Journal",
+
   headingFolders: "2. Dossiers",
   syncWholeVaultName: "Synchroniser tout le coffre",
   syncWholeVaultDesc:

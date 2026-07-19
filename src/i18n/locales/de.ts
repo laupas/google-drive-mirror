@@ -25,6 +25,8 @@ export const de: Partial<Messages> = {
     "Google Drive Mirror: Bitte zuerst in den Einstellungen anmelden.",
   noticeLoginSuccess:
     "Google Drive Mirror: Anmeldung erfolgreich, Token gespeichert.",
+  noticeNoTargets:
+    "Google Drive Mirror: Noch kein Sync-Ziel konfiguriert. Bitte in den Einstellungen eines hinzufügen.",
 
   // ---- Einstellungen: Überschriften & Google Cloud ----
   settingsTitle: "Google Drive Mirror",
@@ -43,6 +45,23 @@ export const de: Partial<Messages> = {
   loginButtonSignIn: "Mit Google anmelden",
   loginFailed: "Anmeldung fehlgeschlagen: {error}",
   logoutTooltip: "Abmelden (Token löschen)",
+
+  // ---- Einstellungen: Sync-Ziele ----
+  headingTargets: "2. Sync-Ziele",
+  targetsHelp:
+    "Jedes Ziel synchronisiert einen lokalen (Unter-)Ordner mit einem Google-Drive-Ordner. Ein Ganz-Vault-Ziel schließt die lokalen Ordner der anderen Ziele automatisch aus, damit ein Unterordner nie in zwei Drives gleichzeitig landet.",
+  targetsEmpty: "Noch kein Sync-Ziel. Unten eines hinzufügen.",
+  targetAddButton: "Sync-Ziel hinzufügen",
+  targetDefaultName: "Ziel {index}",
+  targetNameName: "Name",
+  targetNameDesc: "Ein Label für dieses Ziel (nur hier sichtbar).",
+  targetNamePlaceholder: "z.B. Arbeitsnotizen",
+  targetRemoveTooltip:
+    "Dieses Ziel entfernen (Dateien bleiben, Sync-Base wird verworfen)",
+  excludeFoldersName: "Ausgeschlossene Ordner",
+  excludeFoldersDesc:
+    "Kommagetrennte, vault-relative Ordner, die von diesem Ziel ausgeschlossen werden (zusätzlich zu den anderen Zielen, die automatisch ausgeschlossen werden). Gilt für beide Seiten. Leer = nichts zusätzlich.",
+  excludeFoldersPlaceholder: "Archiv, Privat/Journal",
 
   // ---- Einstellungen: Ordner ----
   headingFolders: "2. Ordner",

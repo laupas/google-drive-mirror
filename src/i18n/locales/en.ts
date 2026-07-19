@@ -26,6 +26,8 @@ export const en = {
   noticeSyncAlreadyRunning: "Google Drive Mirror: A sync is already running…",
   noticeSignInFirst: "Google Drive Mirror: Please sign in in the settings first.",
   noticeLoginSuccess: "Google Drive Mirror: Signed in, token saved.",
+  noticeNoTargets:
+    "Google Drive Mirror: No sync target configured yet. Add one in the settings.",
 
   // ---- Settings: headings & Google Cloud (settings-tab.ts) ----
   settingsTitle: "Google Drive Mirror",
@@ -43,6 +45,22 @@ export const en = {
   loginButtonSignIn: "Sign in with Google",
   loginFailed: "Sign-in failed: {error}",
   logoutTooltip: "Sign out (delete token)",
+
+  // ---- Settings: sync targets (settings-tab.ts) ----
+  headingTargets: "2. Sync targets",
+  targetsHelp:
+    "Each target syncs one local (sub)folder with one Google Drive folder. A whole-vault target automatically excludes the local folders of the other targets, so a subfolder is never mirrored into two Drives at once.",
+  targetsEmpty: "No sync target yet. Add one below.",
+  targetAddButton: "Add sync target",
+  targetDefaultName: "Target {index}",
+  targetNameName: "Name",
+  targetNameDesc: "A label for this target (only shown here).",
+  targetNamePlaceholder: "e.g. Work notes",
+  targetRemoveTooltip: "Remove this target (keeps files, drops the sync base)",
+  excludeFoldersName: "Excluded folders",
+  excludeFoldersDesc:
+    "Comma-separated vault-relative folders to exclude from this target (on top of the other targets, which are excluded automatically). Applies to both sides. Empty = nothing extra.",
+  excludeFoldersPlaceholder: "Archive, Private/Journal",
 
   // ---- Settings: folders (settings-tab.ts) ----
   headingFolders: "2. Folders",

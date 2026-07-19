@@ -15,29 +15,27 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { SyncEngine } from "../../src/sync-engine";
 import { SyncStateStore } from "../../src/sync-state";
 import { SyncStatus } from "../../src/sync-status";
-import {
-  DEFAULT_SETTINGS,
-  PluginSettings,
-  SyncStateEntry,
-} from "../../src/types";
+import { SyncStateEntry, SyncTarget, newTarget } from "../../src/types";
 import { FakeVault } from "../helpers/fake-vault";
 import { FakeDriveClient } from "../helpers/fake-drive";
 import { FakeStorage } from "../helpers/fake-storage";
 import { md5Hex } from "../helpers/md5";
 
-/** Options for setup(): settings + a pre-populated sync base. */
-interface SetupOptions extends Partial<PluginSettings> {
+/** Options for setup(): target fields + a pre-populated sync base. */
+interface SetupOptions extends Partial<SyncTarget> {
   /** Pre-populated base entries (formerly settings.syncState). */
   syncState?: Record<string, SyncStateEntry>;
+  /** Local folders of OTHER targets (excluded from this target's scope). */
+  siblingLocalFolders?: string[];
 }
 
 /** Builds engine + fakes; returns all parts for arrange/assert. */
 function setup(opts: SetupOptions = {}) {
-  const { syncState, ...settingsOverrides } = opts;
-  const settings: PluginSettings = {
-    ...DEFAULT_SETTINGS,
+  const { syncState, siblingLocalFolders, ...targetOverrides } = opts;
+  const target: SyncTarget = {
+    ...newTarget("t1", "Test target"),
     driveFolderId: "root",
-    ...settingsOverrides,
+    ...targetOverrides,
   };
   const vault = new FakeVault();
   const drive = new FakeDriveClient();
@@ -52,10 +50,11 @@ function setup(opts: SetupOptions = {}) {
     vault as never,
     drive.asClient(),
     store,
-    settings,
-    status
+    target,
+    status,
+    () => siblingLocalFolders ?? []
   );
-  return { engine, vault, drive, store, storage, settings, status };
+  return { engine, vault, drive, store, storage, target, status };
 }
 
 beforeEach(() => {
@@ -244,6 +243,96 @@ describe("SyncEngine.sync — Ignore-Muster (Blacklist)", () => {
     expect(summary?.deletedRemote).toBe(0);
     expect(drive.calls.trashFile).toEqual([]);
     expect(vault.has("note.secret")).toBe(true);
+  });
+});
+
+describe("SyncEngine.sync — Ausschluss-Ordner (mehrere Ziele)", () => {
+  it("ein Full-Vault-Ziel lädt Dateien im Ordner eines anderen Ziels NICHT hoch", async () => {
+    // Arrange: whole-vault target; sibling target owns "work/".
+    const { engine, vault, drive } = setup({
+      localFolder: "",
+      siblingLocalFolders: ["work"],
+    });
+    vault.seed("notes/keep.md", "im scope");
+    vault.seed("work/owned.md", "gehört dem anderen Ziel");
+
+    // Act
+    const summary = await engine.sync(false);
+
+    // Assert: only the non-excluded file is uploaded.
+    expect(summary?.uploaded).toBe(1);
+    expect(drive.calls.createFile).toEqual([{ path: "notes/keep.md" }]);
+  });
+
+  it("lädt Drive-Dateien im ausgeschlossenen Ordner NICHT herunter", async () => {
+    // Arrange: whole-vault target; sibling owns "work/". Drive has a file
+    // under the excluded folder and one outside it.
+    const { engine, vault, drive } = setup({
+      localFolder: "",
+      siblingLocalFolders: ["work"],
+    });
+    drive.seed({ path: "keep.md", content: "a", md5: "m1" });
+    drive.seed({ path: "work/skip.md", content: "b", md5: "m2" });
+
+    // Act
+    const summary = await engine.sync(false);
+
+    // Assert: only the non-excluded file is downloaded.
+    expect(summary?.downloaded).toBe(1);
+    expect(vault.has("keep.md")).toBe(true);
+    expect(vault.has("work/skip.md")).toBe(false);
+  });
+
+  it("LÖSCHSCHUTZ: eine ausgeschlossene Datei mit beidseitiger Base wird auf KEINER Seite gelöscht", async () => {
+    // Arrange: file under excluded folder exists on both sides, base attests both.
+    // If exclusion applied on one side only, the reconciler would delete it.
+    const content = "wichtig";
+    const md5 = md5Hex(content);
+    const { engine, vault, drive, store } = setup({
+      localFolder: "",
+      siblingLocalFolders: ["work"],
+      syncState: {
+        "work/note.md": {
+          path: "work/note.md",
+          local: true,
+          remote: true,
+          isFolder: false,
+          driveId: "d1",
+          md5,
+          size: content.length,
+          localMtime: 1000,
+          remoteMtime: 1000,
+        },
+      },
+    });
+    vault.seed("work/note.md", content);
+    drive.seed({ path: "work/note.md", content, md5, id: "d1" });
+
+    // Act
+    const summary = await engine.sync(false);
+
+    // Assert: no deletion on either side.
+    expect(summary?.deletedLocal).toBe(0);
+    expect(summary?.deletedRemote).toBe(0);
+    expect(drive.calls.trashFile).toEqual([]);
+    expect(vault.has("work/note.md")).toBe(true);
+  });
+
+  it("honoriert auch das manuelle excludeFolders-Feld (zusätzlich zu Geschwistern)", async () => {
+    // Arrange
+    const { engine, vault, drive } = setup({
+      localFolder: "",
+      excludeFolders: "archive",
+    });
+    vault.seed("keep.md", "text");
+    vault.seed("archive/old.md", "alt");
+
+    // Act
+    const summary = await engine.sync(false);
+
+    // Assert
+    expect(summary?.uploaded).toBe(1);
+    expect(drive.calls.createFile).toEqual([{ path: "keep.md" }]);
   });
 });
 

@@ -25,6 +25,8 @@ export const it: Partial<Messages> = {
   noticeSignInFirst:
     "Google Drive Mirror: Accedi prima nelle impostazioni.",
   noticeLoginSuccess: "Google Drive Mirror: Accesso riuscito, token salvato.",
+  noticeNoTargets:
+    "Google Drive Mirror: Nessuna destinazione di sincronizzazione configurata. Aggiungine una nelle impostazioni.",
 
   // ---- Impostazioni: intestazioni & Google Cloud ----
   settingsTitle: "Google Drive Mirror",
@@ -45,6 +47,23 @@ export const it: Partial<Messages> = {
   logoutTooltip: "Disconnetti (elimina token)",
 
   // ---- Impostazioni: cartelle ----
+  // ---- Impostazioni: destinazioni di sincronizzazione ----
+  headingTargets: "2. Destinazioni di sincronizzazione",
+  targetsHelp:
+    "Ogni destinazione sincronizza una (sotto)cartella locale con una cartella di Google Drive. Una destinazione dell'intero vault esclude automaticamente le cartelle locali delle altre destinazioni, così una sottocartella non finisce mai in due Drive contemporaneamente.",
+  targetsEmpty: "Ancora nessuna destinazione. Aggiungine una qui sotto.",
+  targetAddButton: "Aggiungi destinazione",
+  targetDefaultName: "Destinazione {index}",
+  targetNameName: "Nome",
+  targetNameDesc: "Un'etichetta per questa destinazione (mostrata solo qui).",
+  targetNamePlaceholder: "es. Note di lavoro",
+  targetRemoveTooltip:
+    "Rimuovi questa destinazione (mantiene i file, azzera la base di sincronizzazione)",
+  excludeFoldersName: "Cartelle escluse",
+  excludeFoldersDesc:
+    "Elenco separato da virgole di cartelle (relative al vault) da escludere da questa destinazione (oltre alle altre destinazioni, escluse automaticamente). Vale per entrambi i lati. Vuoto = nulla in più.",
+  excludeFoldersPlaceholder: "Archivio, Privato/Diario",
+
   headingFolders: "2. Cartelle",
   syncWholeVaultName: "Sincronizza l'intero vault",
   syncWholeVaultDesc:

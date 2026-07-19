@@ -52,6 +52,24 @@
   color: var(--text-muted);
   padding: 0.5rem 0;
 }
+
+/* Sync target block (collapsible per target). */
+.gds-target {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 0.25rem 0.75rem 0.5rem;
+  margin: 0.75rem 0;
+  background: var(--background-primary-alt);
+}
+.gds-target > summary.gds-target-summary {
+  cursor: pointer;
+  font-weight: var(--font-semibold);
+  padding: 0.5rem 0;
+  list-style-position: inside;
+}
+.gds-target-body {
+  padding-top: 0.25rem;
+}
 .gds-log-row {
   display: flex;
   gap: 0.5rem;

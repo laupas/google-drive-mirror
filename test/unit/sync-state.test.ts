@@ -5,7 +5,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { SyncStateStore } from "../../src/sync-state";
+import {
+  SyncStateStore,
+  isStateFile,
+  stateFileName,
+} from "../../src/sync-state";
 import { baseEntry } from "../helpers/factories";
 import { FakeStorage } from "../helpers/fake-storage";
 
@@ -147,6 +151,63 @@ describe("SyncStateStore.all", () => {
     // Assert
     expect(all).toHaveLength(2);
     expect(all).toEqual(expect.arrayContaining([a, b]));
+  });
+});
+
+describe("Per-Ziel State-Dateien", () => {
+  it("stateFileName bildet den Ziel-Dateinamen", () => {
+    expect(stateFileName("abc")).toBe("sync-state-abc.json");
+  });
+
+  it("isStateFile erkennt per-Ziel-Dateien, nicht die Legacy-Datei", () => {
+    expect(isStateFile("sync-state-abc.json")).toBe(true);
+    expect(isStateFile("sync-state.json")).toBe(false);
+    expect(isStateFile("data.json")).toBe(false);
+  });
+
+  it("schreibt in die injizierte Datei und destroy() entfernt sie", async () => {
+    // Arrange
+    const storage = new FakeStorage();
+    const store = new SyncStateStore(
+      storage.asStorage(),
+      () => "scope",
+      stateFileName("t1")
+    );
+    store.set(baseEntry({ path: "a.md" }));
+
+    // Act
+    await store.save();
+
+    // Assert: written to the per-target file, not the legacy one.
+    expect(storage.peek("sync-state-t1.json")).toBeDefined();
+    expect(storage.peek("sync-state.json")).toBeUndefined();
+
+    // Act: destroy removes the file.
+    await store.destroy();
+    expect(storage.peek("sync-state-t1.json")).toBeUndefined();
+  });
+
+  it("verwirft eine Base mit nicht passender scopeId (Löschschutz)", async () => {
+    // Arrange: file on disk carries a foreign scopeId.
+    const storage = new FakeStorage();
+    await storage.writeJson(stateFileName("t1"), {
+      version: 1,
+      scopeId: "OTHER-SCOPE",
+      lastSyncMs: 123,
+      entries: { "x.md": baseEntry({ path: "x.md" }) },
+    });
+    const store = new SyncStateStore(
+      storage.asStorage(),
+      () => "MY-SCOPE",
+      stateFileName("t1")
+    );
+
+    // Act
+    await store.load();
+
+    // Assert: foreign base discarded (no entries), no stale lastSyncMs.
+    expect(store.all()).toEqual([]);
+    expect(store.getLastSyncMs()).toBe(0);
   });
 });
 

@@ -2,7 +2,21 @@ import { SyncStateEntry } from "./types";
 import { PluginStorage } from "./storage";
 import { log } from "./logger";
 
+/** Default state file name (legacy single-target layout / tests). */
 const STATE_FILE = "sync-state.json";
+
+/** Prefix for per-target state files: `sync-state-<targetId>.json`. */
+const STATE_FILE_PREFIX = "sync-state-";
+
+/** Builds the per-target state file name for a target id. */
+export function stateFileName(targetId: string): string {
+  return `${STATE_FILE_PREFIX}${targetId}.json`;
+}
+
+/** Is `fileName` a per-target state file? (used to find orphans). */
+export function isStateFile(fileName: string): boolean {
+  return fileName.startsWith(STATE_FILE_PREFIX) && fileName.endsWith(".json");
+}
 
 /** Serialization format of the state file. */
 interface StateFile {
@@ -35,13 +49,17 @@ export class SyncStateStore {
 
   /**
    * @param storage  Persistence helper.
-   * @param scopeId  Returns the current scope identity (vault + Drive folder).
-   *                 A function, because it can change at runtime
+   * @param scopeId  Returns the current scope identity (vault + Drive folder +
+   *                 local scope). A function, because it can change at runtime
    *                 (folder change).
+   * @param fileName Name of the state file. Defaults to the legacy
+   *                 `sync-state.json`; per-target stores pass
+   *                 `sync-state-<id>.json` (see `stateFileName`).
    */
   constructor(
     private storage: PluginStorage,
-    private scopeId: () => string
+    private scopeId: () => string,
+    private fileName: string = STATE_FILE
   ) {}
 
   /**
@@ -53,7 +71,10 @@ export class SyncStateStore {
     entries: Record<string, SyncStateEntry>;
     lastSyncMs: number;
   }): Promise<void> {
-    const data = await this.storage.readJson<StateFile | null>(STATE_FILE, null);
+    const data = await this.storage.readJson<StateFile | null>(
+      this.fileName,
+      null
+    );
     if (data && data.entries) {
       const current = this.scopeId();
       // scopeId missing (old file) -> tolerate; doesn't match -> discard.
@@ -89,7 +110,12 @@ export class SyncStateStore {
       lastSyncMs: this.lastSyncMs,
       entries: this.entries,
     };
-    await this.storage.writeJson(STATE_FILE, file);
+    await this.storage.writeJson(this.fileName, file);
+  }
+
+  /** Deletes the underlying state file (e.g. when a target is removed). */
+  async destroy(): Promise<void> {
+    await this.storage.remove(this.fileName);
   }
 
   getLastSyncMs(): number {

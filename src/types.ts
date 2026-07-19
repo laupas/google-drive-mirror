@@ -2,16 +2,25 @@
  * Central type definitions for the Google Drive sync plugin.
  */
 
-/** Persistent plugin settings (stored in data.json). */
-export interface PluginSettings {
-  /** OAuth client ID of the user's own Google Cloud app. */
-  clientId: string;
-  /** OAuth client secret of the user's own Google Cloud app. */
-  clientSecret: string;
-  /** Long-lived refresh token from which access tokens are derived. */
-  refreshToken: string;
+/**
+ * One configured sync target: a pairing of a Google Drive folder with a local
+ * vault (sub)folder plus its own filters and deletion behavior. A plugin can
+ * hold MANY targets (each syncing an independent scope). One target may be a
+ * whole-vault sync (`localFolder === ""`); such a target automatically excludes
+ * the local folders of all OTHER targets so a subfolder is never synced into
+ * two Drives at once (see `excludeFolders`).
+ *
+ * All targets share the SAME OAuth account (the global credentials on
+ * `PluginSettings`). Each target keeps its OWN sync base in a separate file
+ * (`sync-state-<id>.json`) so a deletion in one scope never leaks into another.
+ */
+export interface SyncTarget {
+  /** Stable identity (used for the per-target state file and the scope ID). */
+  id: string;
+  /** Human-readable name shown in the settings UI. */
+  name: string;
 
-  /** Google Drive folder ID that serves as the sync root. */
+  /** Google Drive folder ID that serves as the sync root for this target. */
   driveFolderId: string;
   /** Display name of the Drive folder (UI only). */
   driveFolderName: string;
@@ -41,6 +50,42 @@ export interface PluginSettings {
    */
   ignorePatterns: string;
 
+  /**
+   * Comma-separated list of vault-relative folders to exclude from this target,
+   * on top of the automatic exclusion of other targets' local folders. Matched
+   * against the sync-relative path like a folder prefix (an entry `drafts`
+   * excludes `drafts` and everything under `drafts/`). Applies on BOTH sides
+   * (local + Drive, files + folders) so an excluded path is never seen as
+   * "deleted on one side". Empty = exclude nothing extra.
+   */
+  excludeFolders: string;
+
+  /**
+   * "Do not delete in Google Drive". When true, a LOCAL deletion is not
+   * propagated to Drive — the Drive file is kept and the base entry
+   * is set to `local=false, remote=true` (the file does not return locally as a
+   * zombie). Via the "Drive only" tree in the settings the
+   * `local=false` flag can be removed so the file is downloaded again.
+   * Default: false.
+   */
+  neverDeleteRemote: boolean;
+}
+
+/** Persistent plugin settings (stored in data.json). */
+export interface PluginSettings {
+  /** OAuth client ID of the user's own Google Cloud app. */
+  clientId: string;
+  /** OAuth client secret of the user's own Google Cloud app. */
+  clientSecret: string;
+  /** Long-lived refresh token from which access tokens are derived. */
+  refreshToken: string;
+
+  /**
+   * Configured sync targets. Each has its own Drive folder + local scope +
+   * filters and its own sync base file. All share the global OAuth account.
+   */
+  targets: SyncTarget[];
+
   /** Automatic sync active? */
   autoSyncEnabled: boolean;
   /** Poll interval for Drive changes in seconds. */
@@ -59,16 +104,6 @@ export interface PluginSettings {
    * so the console only shows errors (Obsidian guideline).
    */
   debugLogging: boolean;
-
-  /**
-   * "Do not delete in Google Drive". When true, a LOCAL deletion is not
-   * propagated to Drive — the Drive file is kept and the base entry
-   * is set to `local=false, remote=true` (the file does not return locally as a
-   * zombie). Via the "Drive only" tree in the settings the
-   * `local=false` flag can be removed so the file is downloaded again.
-   * Default: false.
-   */
-  neverDeleteRemote: boolean;
 }
 
 /**
@@ -172,19 +207,29 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   clientId: "",
   clientSecret: "",
   refreshToken: "",
-  driveFolderId: "",
-  driveFolderName: "",
-  driveSharedId: "",
-  localFolder: "",
-  allowedExtensions: "",
-  ignorePatterns: "",
+  targets: [],
   autoSyncEnabled: false,
   pollIntervalSeconds: 60,
   localDebounceMs: 2500,
   logRetentionHours: 24,
   debugLogging: false,
-  neverDeleteRemote: false,
 };
+
+/** Builds a fresh, empty sync target with sensible defaults. */
+export function newTarget(id: string, name: string): SyncTarget {
+  return {
+    id,
+    name,
+    driveFolderId: "",
+    driveFolderName: "",
+    driveSharedId: "",
+    localFolder: "",
+    allowedExtensions: "",
+    ignorePatterns: "",
+    excludeFolders: "",
+    neverDeleteRemote: false,
+  };
+}
 
 /** OAuth scope: full Drive access, so that files created manually in Drive are also visible. */
 export const OAUTH_SCOPE = "https://www.googleapis.com/auth/drive";

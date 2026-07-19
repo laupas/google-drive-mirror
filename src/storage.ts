@@ -41,4 +41,22 @@ export class PluginStorage {
       await this.vault.adapter.remove(p);
     }
   }
+
+  /**
+   * Lists the plain file names (not full paths) directly inside the plugin
+   * folder. Used to find orphaned per-target state files. Returns an empty
+   * array on any error (folder missing, adapter without list support).
+   */
+  async listFileNames(): Promise<string[]> {
+    const dir = `${this.vault.configDir}/plugins/${this.pluginId}`;
+    try {
+      if (!(await this.vault.adapter.exists(dir))) return [];
+      const listing = await this.vault.adapter.list(dir);
+      // adapter.list returns full paths in `files`; reduce to the base name.
+      return listing.files.map((f) => f.split("/").pop() ?? f);
+    } catch (e) {
+      log.error("Konnte Plugin-Ordner nicht auflisten:", e);
+      return [];
+    }
+  }
 }

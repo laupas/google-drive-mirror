@@ -4,25 +4,42 @@ import { OAuthManager } from "./oauth";
 import { SettingsTab } from "./settings-tab";
 import { PluginStorage } from "./storage";
 import { SyncEngine } from "./sync-engine";
-import { SyncStateStore } from "./sync-state";
+import { SyncStateStore, isStateFile, stateFileName } from "./sync-state";
 import { SyncStatus } from "./sync-status";
-import { DEFAULT_SETTINGS, PluginSettings, SyncStateEntry } from "./types";
+import {
+  DEFAULT_SETTINGS,
+  PluginSettings,
+  SyncStateEntry,
+  SyncTarget,
+  newTarget,
+} from "./types";
 import { log, setDebugLogging } from "./logger";
 import { initLocale, t } from "./i18n";
 import { isIgnored, parseIgnorePatterns } from "./ignore";
 
+/** Engine + state store pair for a single sync target. */
+interface TargetRuntime {
+  engine: SyncEngine;
+  state: SyncStateStore;
+}
+
 /**
- * Plugin entry point. Wires up OAuth, Drive client, sync engine
- * and the auto-sync triggers (local vault events + Drive poll interval).
+ * Plugin entry point. Wires up OAuth, Drive client and one sync engine PER
+ * configured target, plus the auto-sync triggers (local vault events + Drive
+ * poll interval). All targets share the same OAuth account and status/log, but
+ * keep independent sync bases (one `sync-state-<id>.json` each).
  */
 export default class GoogleDriveSyncPlugin extends Plugin {
   settings!: PluginSettings;
   oauth!: OAuthManager;
   drive!: GoogleDriveClient;
   status!: SyncStatus;
-  private engine!: SyncEngine;
-  private state!: SyncStateStore;
   private storage!: PluginStorage;
+
+  /** One engine + state store per target id. Rebuilt when targets change. */
+  private runtimes = new Map<string, TargetRuntime>();
+  /** True while a (multi-target) sync run is in progress. */
+  private running = false;
 
   private pollHandle: number | null = null;
   private debounceHandle: number | null = null;
@@ -33,24 +50,13 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   async onload(): Promise<void> {
     // Couple the UI language to the Obsidian setting (fallback English).
     initLocale();
-    const raw = await this.loadSettings();
+    await this.loadSettings();
     setDebugLogging(this.settings.debugLogging);
 
     this.oauth = new OAuthManager(this.settings);
     this.drive = new GoogleDriveClient(this.oauth);
 
     this.storage = new PluginStorage(this.app.vault, this.manifest.id);
-
-    // Load sync state from its own file; migrate from old data.json if needed.
-    // The scope ID binds the base to vault + Drive folder. If the
-    // sync-state.json is copied from another vault, it won't match and the
-    // base is discarded (instead of wrongly deleting everything).
-    this.state = new SyncStateStore(this.storage, () => this.scopeId());
-    await this.state.load(
-      raw && raw.syncState
-        ? { entries: raw.syncState, lastSyncMs: raw.lastSyncMs ?? 0 }
-        : undefined
-    );
 
     // Load log from its own file; retention duration from settings.
     this.status = new SyncStatus(
@@ -59,13 +65,10 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     );
     await this.status.load();
 
-    this.engine = new SyncEngine(
-      this.app.vault,
-      this.drive,
-      this.state,
-      this.settings,
-      this.status
-    );
+    // Build one engine + state store per configured target.
+    await this.rebuildRuntimes();
+    // Remove state files of targets that no longer exist (data hygiene).
+    await this.cleanupOrphanStateFiles();
 
     this.addSettingTab(new SettingsTab(this.app, this));
 
@@ -120,34 +123,112 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.clearTimers();
   }
 
+  // ---------- Target runtimes ----------
+
+  /**
+   * (Re)builds the engine + state store for every configured target. Each state
+   * store binds to its own file and its own scope id (target id + Drive folder +
+   * local folder). Called on load and whenever the target list changes.
+   */
+  async rebuildRuntimes(): Promise<void> {
+    // Preserve stores of targets that still exist so their in-memory base isn't
+    // dropped needlessly (avoids a redundant reload) — but a scope change is
+    // handled explicitly via resetTargetBase(), so a plain rebuild reuses them.
+    const next = new Map<string, TargetRuntime>();
+    for (const target of this.settings.targets) {
+      const existing = this.runtimes.get(target.id);
+      if (existing) {
+        next.set(target.id, existing);
+        continue;
+      }
+      const state = new SyncStateStore(
+        this.storage,
+        () => this.scopeId(target),
+        stateFileName(target.id)
+      );
+      await state.load();
+      const engine = new SyncEngine(
+        this.app.vault,
+        this.drive,
+        state,
+        target,
+        this.status,
+        () => this.siblingLocalFolders(target.id)
+      );
+      next.set(target.id, { engine, state });
+    }
+    this.runtimes = next;
+  }
+
+  /**
+   * Local folders (vault-relative) of all targets EXCEPT `exceptId`. A target
+   * uses these to exclude other targets' scopes from its own sync — so a
+   * subfolder owned by one target is never mirrored into a second Drive by a
+   * whole-vault target. Empty local folders (whole-vault targets) contribute
+   * nothing, as there is no specific subfolder to exclude.
+   */
+  private siblingLocalFolders(exceptId: string): string[] {
+    return this.settings.targets
+      .filter((tg) => tg.id !== exceptId && tg.localFolder.trim() !== "")
+      .map((tg) => tg.localFolder.trim());
+  }
+
+  /** Deletes `sync-state-*.json` files that don't belong to a current target. */
+  private async cleanupOrphanStateFiles(): Promise<void> {
+    const valid = new Set(
+      this.settings.targets.map((tg) => stateFileName(tg.id))
+    );
+    const files = await this.storage.listFileNames();
+    for (const name of files) {
+      if (isStateFile(name) && !valid.has(name)) {
+        await this.storage.remove(name);
+        log.info("Verwaiste Sync-State-Datei entfernt:", name);
+      }
+    }
+  }
+
   // ---------- Sync triggers ----------
 
-  /** Manual/explicit sync. */
+  /**
+   * Manual/explicit sync. Runs every configured target SEQUENTIALLY (parallel
+   * targets would fight over event suppression and Drive rate limits). The
+   * shared `running` flag serializes overlapping calls.
+   */
   async runSync(showNotice: boolean): Promise<void> {
-    if (this.engine.isRunning()) {
+    if (this.running) {
       if (showNotice) new Notice(t("noticeSyncAlreadyRunning"));
       return;
     }
     if (!this.oauth.isConfigured()) {
-      if (showNotice) {
-        new Notice(t("noticeSignInFirst"));
-      }
+      if (showNotice) new Notice(t("noticeSignInFirst"));
       return;
     }
+    const targets = this.settings.targets.filter((tg) => tg.driveFolderId);
+    if (targets.length === 0) {
+      if (showNotice) new Notice(t("noticeNoTargets"));
+      return;
+    }
+
+    this.running = true;
     // Lightweight ticker so the elapsed time keeps updating even without new events.
     const ticker = window.setInterval(() => this.status.touch(), 1000);
     try {
       await this.withSuppressedEvents(async () => {
-        await this.engine.sync(showNotice);
+        for (const target of targets) {
+          const rt = this.runtimes.get(target.id);
+          if (!rt) continue;
+          await rt.engine.sync(showNotice);
+        }
       });
     } finally {
+      this.running = false;
       window.clearInterval(ticker);
     }
   }
 
   /** Is a sync currently running? (for the UI). */
   isSyncing(): boolean {
-    return this.engine.isRunning();
+    return this.running;
   }
 
   /** Updates the status bar based on the current sync status. */
@@ -210,7 +291,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
     const intervalMs = Math.max(15, this.settings.pollIntervalSeconds) * 1000;
     this.pollHandle = window.setInterval(() => {
-      if (this.oauth.isConfigured() && !this.engine.isRunning()) {
+      if (this.oauth.isConfigured() && !this.running) {
         void this.runSync(false);
       }
     }, intervalMs);
@@ -232,77 +313,144 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     new Notice(t("noticeLoginSuccess"));
   }
 
+  // ---------- Target management (from the settings UI) ----------
+
+  /** All configured targets. */
+  getTargets(): SyncTarget[] {
+    return this.settings.targets;
+  }
+
+  /** Adds a new empty target, persists and rebuilds the runtimes. */
+  async addTarget(): Promise<SyncTarget> {
+    const id = generateTargetId();
+    const name = t("targetDefaultName", {
+      index: this.settings.targets.length + 1,
+    });
+    const target = newTarget(id, name);
+    this.settings.targets.push(target);
+    await this.saveSettings();
+    await this.rebuildRuntimes();
+    return target;
+  }
+
   /**
-   * Sets the Drive root folder. If the folder ID changes from the previous
-   * one, the sync base is cleared — otherwise the reconciler would compare the
-   * files of the NEW folder against the base of the OLD folder and e.g. treat
-   * local files wrongly as "deleted remotely".
+   * Removes a target: drops its runtime, deletes its state file and persists.
+   * The files themselves are untouched (only the sync base is discarded).
    */
-  async setDriveFolder(id: string, name: string, sharedId: string): Promise<void> {
-    const changed = this.settings.driveFolderId !== id;
-    this.settings.driveFolderId = id;
-    this.settings.driveFolderName = name;
-    this.settings.driveSharedId = sharedId;
+  async removeTarget(id: string): Promise<void> {
+    const rt = this.runtimes.get(id);
+    if (rt) {
+      await rt.state.destroy();
+      this.runtimes.delete(id);
+    }
+    this.settings.targets = this.settings.targets.filter((tg) => tg.id !== id);
+    await this.saveSettings();
+    await this.rebuildRuntimes();
+  }
+
+  /** Persists after a target field changed (no scope reset). */
+  async updateTarget(id: string, patch: Partial<SyncTarget>): Promise<void> {
+    const target = this.settings.targets.find((tg) => tg.id === id);
+    if (!target) return;
+    Object.assign(target, patch);
+    await this.saveSettings();
+  }
+
+  /**
+   * Sets the Drive root folder for a target. If the folder ID changes, the
+   * target's sync base is reset — otherwise the reconciler would compare the
+   * files of the NEW folder against the base of the OLD folder.
+   */
+  async setDriveFolderForTarget(
+    id: string,
+    driveId: string,
+    name: string,
+    sharedId: string
+  ): Promise<void> {
+    const target = this.settings.targets.find((tg) => tg.id === id);
+    if (!target) return;
+    const changed = target.driveFolderId !== driveId;
+    target.driveFolderId = driveId;
+    target.driveFolderName = name;
+    target.driveSharedId = sharedId;
+    await this.saveSettings();
     if (changed) {
-      await this.resetSyncBase();
+      await this.resetTargetBase(id);
       log.debug("Drive-Ordner gewechselt -> Sync-Base zurückgesetzt.");
     }
-    await this.saveSettings();
   }
 
   /**
-   * Sets the local sync folder ("" = whole vault). If the scope changes, the
-   * sync base is cleared (analogous to changing the Drive folder), so the
-   * reconciler doesn't compare files of a different scope against the old base.
+   * Sets the local sync folder for a target ("" = whole vault). If the scope
+   * changes, the target's sync base is reset (analogous to the Drive folder).
    */
-  async setLocalFolder(folder: string): Promise<void> {
-    const changed = this.settings.localFolder !== folder;
-    this.settings.localFolder = folder;
+  async setLocalFolderForTarget(id: string, folder: string): Promise<void> {
+    const target = this.settings.targets.find((tg) => tg.id === id);
+    if (!target) return;
+    const changed = target.localFolder !== folder;
+    target.localFolder = folder;
+    await this.saveSettings();
     if (changed) {
-      await this.resetSyncBase();
+      await this.resetTargetBase(id);
       log.debug("Lokaler Scope gewechselt -> Sync-Base zurückgesetzt.");
     }
-    await this.saveSettings();
   }
 
-  /** Clears the sync history (not the files) and persists. */
-  async resetSyncBase(): Promise<void> {
-    this.state.clear();
-    await this.state.save();
+  /** Clears the sync history of one target (not the files) and persists. */
+  async resetTargetBase(id: string): Promise<void> {
+    const rt = this.runtimes.get(id);
+    if (!rt) return;
+    rt.state.clear();
+    await rt.state.save();
   }
 
-  /** Timestamp of the last successful sync (ms; 0 = never). */
+  /** Clears the sync history of ALL targets. */
+  async resetAllBases(): Promise<void> {
+    for (const rt of this.runtimes.values()) {
+      rt.state.clear();
+      await rt.state.save();
+    }
+  }
+
+  /** Most recent successful sync across all targets (ms; 0 = never). */
   getLastSyncMs(): number {
-    return this.state.getLastSyncMs();
+    let max = 0;
+    for (const rt of this.runtimes.values()) {
+      max = Math.max(max, rt.state.getLastSyncMs());
+    }
+    return max;
   }
 
-  /** All sync-state entries (for the sync tree in the settings). */
-  getSyncEntries(): SyncStateEntry[] {
-    return this.state.all();
+  /** Sync-state entries of one target (for its sync tree in the settings). */
+  getSyncEntries(id: string): SyncStateEntry[] {
+    return this.runtimes.get(id)?.state.all() ?? [];
   }
 
   /**
-   * Marks a "Drive-only" entry (file OR folder) for restoration: removes the
-   * keptRemoteOnly flag so it is downloaded/created locally on the next sync.
-   * Persists immediately.
+   * Marks a "Drive-only" entry (file OR folder) of a target for restoration:
+   * removes the keptRemoteOnly flag so it is downloaded/created locally on the
+   * next sync. Persists immediately.
    */
-  async restoreRemoteOnly(path: string): Promise<void> {
-    const entry = this.state.get(path);
+  async restoreRemoteOnly(id: string, path: string): Promise<void> {
+    const rt = this.runtimes.get(id);
+    if (!rt) return;
+    const entry = rt.state.get(path);
     if (!entry || !entry.keptRemoteOnly) return;
-    this.state.set({ ...entry, keptRemoteOnly: false });
-    await this.state.save();
+    rt.state.set({ ...entry, keptRemoteOnly: false });
+    await rt.state.save();
   }
 
   /**
-   * Unique identity of vault + Drive folder + local scope. Binds the sync base
-   * to exactly this combination, so a base copied from another vault is
-   * detected and discarded.
+   * Unique identity of vault + Drive folder + local scope for a target. Binds
+   * the sync base to exactly this combination, so a base copied from another
+   * vault is detected and discarded. The target id keeps the scope unique even
+   * if two targets happen to share the same Drive/local folder.
    */
-  private scopeId(): string {
+  private scopeId(target: SyncTarget): string {
     const vault = this.app.vault.getName();
-    const drive = this.settings.driveFolderId || "-";
-    const local = this.settings.localFolder || "<vault>";
-    return `${vault}::${drive}::${local}`;
+    const drive = target.driveFolderId || "-";
+    const local = target.localFolder || "<vault>";
+    return `${vault}::${target.id}::${drive}::${local}`;
   }
 
   // ---------- Event suppression during sync writes ----------
@@ -328,27 +476,74 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     }
   }
 
+  /**
+   * Does the vault path fall into ANY configured target's scope (and is not
+   * ignored/excluded there)? Used to decide whether a local change should
+   * trigger an auto-sync.
+   */
   private isInScope(vaultPath: string): boolean {
     // Never sync system folders (especially for the whole vault).
     const p = vaultPath.startsWith("/") ? vaultPath.slice(1) : vaultPath;
     if (p === ".obsidian" || p.startsWith(".obsidian/")) return false;
     if (p === ".trash" || p.startsWith(".trash/")) return false;
 
-    const f = this.settings.localFolder.trim();
-    let rel = p;
+    return this.settings.targets.some((target) =>
+      this.inTargetScope(target, vaultPath, p)
+    );
+  }
+
+  /** Scope check for a single target (folder prefix + ignore + exclude). */
+  private inTargetScope(
+    target: SyncTarget,
+    vaultPath: string,
+    stripped: string
+  ): boolean {
+    const f = target.localFolder.trim();
+    let rel = stripped;
     if (f) {
       const norm = normalizePath(f);
       const prefix = norm + "/";
       if (vaultPath !== norm && !vaultPath.startsWith(prefix)) return false;
       rel = vaultPath === norm ? "" : vaultPath.slice(prefix.length);
     }
+    if (!rel) return true;
 
-    // Apply ignore patterns (blacklist) to the sync-relative path — analogous
-    // to the engine, so an ignored file doesn't trigger an auto-sync.
-    const patterns = parseIgnorePatterns(this.settings.ignorePatterns);
-    if (rel && isIgnored(rel, patterns)) return false;
+    // Ignore patterns (blacklist) on the sync-relative path.
+    const patterns = parseIgnorePatterns(target.ignorePatterns);
+    if (isIgnored(rel, patterns)) return false;
 
+    // Excluded folders: other targets' scopes + this target's excludeFolders.
+    for (const ex of this.excludeFoldersFor(target)) {
+      if (rel === ex || rel.startsWith(ex + "/")) return false;
+    }
     return true;
+  }
+
+  /**
+   * Sync-relative excluded folder prefixes for a target (siblings' local
+   * folders + user excludeFolders), mirroring the engine's computeExcludeFolders
+   * for the auto-sync scope check. For a whole-vault target the prefix is empty,
+   * so sibling folders map 1:1.
+   */
+  private excludeFoldersFor(target: SyncTarget): string[] {
+    const result = new Set<string>();
+    const f = target.localFolder.trim();
+    const prefix = f ? normalizePath(f) + "/" : "";
+
+    for (const sib of this.siblingLocalFolders(target.id)) {
+      const norm = normalizePath(sib);
+      if (!prefix) {
+        result.add(norm);
+      } else if (norm === prefix.slice(0, -1) || norm.startsWith(prefix)) {
+        const rel = norm.slice(prefix.length);
+        if (rel) result.add(rel);
+      }
+    }
+    for (const raw of target.excludeFolders.split(",")) {
+      const norm = normalizePath(raw.trim());
+      if (norm) result.add(norm);
+    }
+    return [...result];
   }
 
   private clearTimers(): void {
@@ -361,22 +556,45 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   // ---------- Persistence ----------
 
   /**
-   * Loads the settings from data.json. Returns the RAW data so onload() can
-   * migrate any old sync state (from earlier versions) still sitting there
-   * into its own sync-state.json.
+   * Loads the settings from data.json. Legacy single-target fields (from
+   * versions before the multi-target model) are dropped — the user reconfigures
+   * targets; the reconciler's deletion safety means a fresh base never deletes.
    */
-  async loadSettings(): Promise<RawData | null> {
+  async loadSettings(): Promise<void> {
     const raw = (await this.loadData()) as RawData | null;
     this.settings = Object.assign({}, DEFAULT_SETTINGS, raw ?? {});
-    // Legacy fields are no longer part of the settings -> remove them from the
-    // object so they don't land in data.json again on the next saveData.
-    delete (this.settings as Partial<RawData>).syncState;
-    delete (this.settings as Partial<RawData>).lastSyncMs;
-    return raw;
+    // Ensure `targets` is always an array (older data.json has no such field).
+    if (!Array.isArray(this.settings.targets)) this.settings.targets = [];
+    // Strip legacy fields so they don't get written back into data.json.
+    stripLegacyFields(this.settings as unknown as Record<string, unknown>);
   }
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+}
+
+/** Generates a short, collision-resistant target id (no crypto dependency). */
+function generateTargetId(): string {
+  const rand = Math.random().toString(36).slice(2, 10);
+  const time = Date.now().toString(36);
+  return `${time}${rand}`;
+}
+
+/** Removes fields from earlier plugin versions that no longer belong here. */
+function stripLegacyFields(obj: Record<string, unknown>): void {
+  for (const key of [
+    "driveFolderId",
+    "driveFolderName",
+    "driveSharedId",
+    "localFolder",
+    "allowedExtensions",
+    "ignorePatterns",
+    "neverDeleteRemote",
+    "syncState",
+    "lastSyncMs",
+  ]) {
+    delete obj[key];
   }
 }
 
