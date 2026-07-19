@@ -69,6 +69,12 @@ The full decision table lives in [`src/reconciler.ts`](src/reconciler.ts) and is
 
 ### 1. Create a Google Cloud app (one-time)
 
+> **New to this / not technical?** Follow the illustrated, plain-language guide
+> instead: **[Step-by-step Google setup](docs/google-cloud-setup.md)** — it
+> walks through both the desktop and the mobile key click by click.
+
+The short version:
+
 1. Open the [Google Cloud Console](https://console.cloud.google.com/).
 2. Create a new project (or pick an existing one).
 3. **APIs & Services → Library** → search for **"Google Drive API"** → **Enable**.
@@ -120,6 +126,9 @@ In the plugin settings:
 The plugin runs on Obsidian mobile (iOS/Android) too. Desktop and mobile use
 the **same Google account and the same synced data** — only the sign-in
 mechanism differs, because a phone can't run the desktop loopback server.
+
+> Prefer a click-by-click walkthrough? See **Part B** of the
+> [Step-by-step Google setup](docs/google-cloud-setup.md).
 
 Google won't let one OAuth client accept both the desktop loopback redirect
 (`http://127.0.0.1`) and a mobile app redirect, so **mobile needs its own OAuth
