@@ -66,7 +66,7 @@ export const en = {
   headingFolders: "2. Folders",
   syncWholeVaultName: "Sync entire vault",
   syncWholeVaultDesc:
-    "On: all files of the vault are synced (except the .obsidian config folder). Off: only a selected subfolder.",
+    "On: all files of the vault are synced (except the .obsidian config folder). Off: only a selected subfolder. Only one target can sync the whole vault.",
   syncWholeVaultLocked:
     "Only one target can sync the whole vault — “{name}” already does. Choose a subfolder for this target.",
   localFolderName: "Local vault folder",
