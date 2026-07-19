@@ -14,8 +14,12 @@ Guide for working in this repository.
 Obsidian plugin for **two-way sync** between vault (sub)folders and Google Drive
 folders. Supports **multiple sync targets** (each = one local (sub)folder ↔ one
 Drive folder, with its own filters and state); one target may be a whole-vault
-sync. Manual and automatic sync. Desktop-only (`manifest.json: isDesktopOnly:
-true`), since Node modules (`http`, `crypto`) are used.
+sync. Manual and automatic sync. Cross-platform (desktop + mobile,
+`manifest.json: isDesktopOnly: false`). The only Node-only code is the OAuth
+loopback server (`http`/`net` in `oauth-loopback.ts`), lazy-imported on desktop
+so mobile never loads it; mobile authenticates via an `obsidian://` protocol
+redirect instead. Hashing uses a pure-JS MD5 (`md5.ts`) and PKCE uses WebCrypto
+(`crypto.subtle`), both available on mobile.
 
 > 🛑 **Data-loss risk (core constraint):** The plugin deletes/overwrites on both sides.
 > The most dangerous class of bugs is "deletion propagated incorrectly". The only
@@ -61,7 +65,9 @@ Data flow: `main.ts` wires everything up → `SyncEngine` orchestrates a run →
 | File | Role |
 |------|------|
 | `main.ts` | Plugin entry point. Holds one `SyncEngine`+`SyncStateStore` PER target (`runtimes` map, rebuilt on target changes), runs targets sequentially in `runSync()`, target CRUD (`addTarget`/`removeTarget`/`updateTarget`/`setDriveFolderForTarget`/`setLocalFolderForTarget`). Commands, ribbon, vault events (debounced upload), poll timer, login. |
-| `oauth.ts` | OAuth 2.0 **loopback flow** (Desktop app). Local HTTP server on `127.0.0.1:<port>` catches the redirect. Token refresh directly against Google. |
+| `oauth.ts` | OAuth 2.0 with **PKCE** on both platforms. Desktop: **loopback flow** (Desktop app) — lazy-loads `oauth-loopback.ts` (the Node `http`/`net` server on `127.0.0.1:<port>` that catches the redirect). Mobile: **`obsidian://gdrive-auth`** redirect delivered via `registerObsidianProtocolHandler` (wired in `main.ts`) → `handleMobileRedirect()`. `effectiveClientId()` picks `settings.mobileClientId` on mobile (iOS/Android client, no secret) else `settings.clientId`. Token refresh directly against Google; `client_secret` sent only when present. |
+| `oauth-loopback.ts` | Desktop-only loopback server (`awaitLoopbackAuthCode`). Statically imports Node `http`/`net`; **only** imported via dynamic `import()` from `oauth.ts`'s desktop branch, so mobile never evaluates the `require("http")`. |
+| `md5.ts` | Pure-JS MD5 (`md5Hex(ArrayBuffer)`) replacing Node `crypto` — works on mobile. Output byte-identical to Node's, guarded by known-vector tests. |
 | `drive-client.ts` | Google Drive REST API v3 (list/download/upload/trash/search/folder). |
 | `sync-engine.ts` | Operates on ONE `SyncTarget` (+ a `siblingLocalFolders()` provider for cross-target exclusion). Collects the local state (MD5 hash), fetches the Drive state, filters, executes actions, updates the sync base. |
 | `reconciler.ts` | Pure functions `reconcile()` (files → `SyncAction[]`) and `reconcileFolders()` (folders → `FolderAction[]`). Deletion only if `b.local`/`b.remote`. Tested in `test/unit/reconciler.test.ts`. |
@@ -82,10 +88,15 @@ sync-state, sync-status, drive-client, oauth, i18n), `test/integration/` (sync-e
 ## Central design decisions (not obvious from the code)
 
 - **Auth:** Each user creates their **own Google Cloud app** (client ID/secret stored
-  locally in the settings). No proxy server. The OAuth client type must be
+  locally in the settings). No proxy server. On **desktop** the OAuth client type must be
   **"Desktop app"** so the loopback redirect works without a registered redirect URI.
-  Scope is the full **`drive`** (`OAUTH_SCOPE` in `types.ts`) — deliberately not
-  `drive.file`, so that files created manually in Drive are also visible.
+  On **mobile** (no loopback possible) the user additionally creates an **"Android/iOS"**
+  client (PKCE, no secret) with `obsidian://gdrive-auth` registered as the redirect URI,
+  and enters its ID as `settings.mobileClientId` (`MOBILE_REDIRECT_URI` in `types.ts`).
+  Deliberately kept user-owned + no backend + no Google verification/CASA audit — the
+  price is per-platform client setup. Scope is the full **`drive`** (`OAUTH_SCOPE` in
+  `types.ts`) — deliberately not `drive.file`, so that files created manually in Drive are
+  also visible.
 - **Shared Drives (Team Drives):** Supported. All Drive calls set `supportsAllDrives=true`
   (constant `SUPPORTS_ALL_DRIVES` in `drive-client.ts`; harmless on My Drive).
   `getFolder`/`searchFolders` return the `driveId`; if the root folder lives in a Shared
