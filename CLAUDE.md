@@ -253,6 +253,31 @@ accessed via `plugin.getLastSyncMs()`.
   Drive client).
 - Uploads: **multipart/related** (metadata + content in a single request), no resumable
   upload.
+- **Retry + backoff (drive-client.ts):** all Drive calls go through a central `request()`
+  wrapper that retries TRANSIENT failures (429 rate limit, 5xx, network exceptions) with
+  exponential backoff + jitter (`MAX_RETRIES`, `RETRY_BASE_MS`). Deterministic 4xx (except
+  429) are not retried. `requestImpl` is constructor-injectable so tests can drive the retry
+  logic without real sleeps (`test/unit/drive-client.test.ts`).
+
+## Performance (large vaults)
+
+- **Local hash cache (`collectLocal`):** instead of reading + MD5-hashing every file on
+  every run, the stored MD5 from the base is reused when **mtime AND size** are unchanged
+  (rsync/Syncthing principle). Only changed/new files (or a size/mtime mismatch) are read.
+  On the second and every later sync almost nothing is hashed. False-positive (cache hit
+  despite a change) is excluded because a real edit always changes mtime; a mismatch just
+  falls back to hashing (never wrong, only slower).
+- **Parallel file transfers (`runPool`, sync-engine.ts):** the real file actions run through
+  a bounded-concurrency pool (`MAX_CONCURRENCY`, 6). File transfers are independent (distinct
+  paths → distinct state keys), so parallel I/O is safe. `noop` actions run sequentially
+  first (state-only). Folder phases stay serial and keep their order: CREATE folders before
+  files, DELETE folders after files. `runPool` is exported + unit-tested
+  (`test/unit/run-pool.test.ts`).
+- **Parallel-safe folder cache (drive-client.ts):** `resolveFolderPath` caches the in-flight
+  PROMISE per accumulated path (not just the finished ID). Two concurrent uploads needing the
+  same not-yet-created folder await the same promise instead of both creating a duplicate
+  Drive folder. On failure the cache entry is dropped so a later run can retry.
+  `ensureParentDir` (local) tolerates a concurrent mkdir race.
 
 ## Interruption robustness / checkpoints (sync-engine.ts)
 
@@ -267,10 +292,10 @@ accessed via `plugin.getLastSyncMs()`.
   and is therefore always a consistent partial state. `checkpoint()` deliberately does NOT
   set `lastSyncMs` (a run only counts as finished at the end) and swallows write errors
   (log only), so a failed checkpoint doesn't abort the sync.
-- **Not rescued by checkpoints:** the preparation phase. `collectLocal()` reads and hashes
-  ALL local files before the first action — it runs again after every interruption. Already
-  transferred files, however, are recognized as `noop` on the next run via MD5 comparison
-  (no double upload).
+- **Preparation phase after an interruption:** `collectLocal()` runs again, but thanks to
+  the mtime+size hash cache it only re-reads files that actually changed — unchanged files
+  reuse their stored MD5 (fast). Already transferred files are recognized as `noop` via MD5
+  comparison (no double upload).
 
 ## Debugging
 

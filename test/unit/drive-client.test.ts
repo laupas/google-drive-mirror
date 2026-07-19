@@ -414,3 +414,56 @@ describe("GoogleDriveClient.createFile — multipart Upload", () => {
     expect(mockedRequestUrl).toHaveBeenCalledTimes(3);
   });
 });
+
+describe("GoogleDriveClient — retry with backoff", () => {
+  /** Response helper. */
+  const resp = (status: number, json: unknown = {}) =>
+    ({ status, json, text: "", arrayBuffer: new ArrayBuffer(0) }) as never;
+
+  it("retries a 429 and then succeeds", async () => {
+    // Arrange: first 429, then 200. Fake timers so the backoff sleep resolves
+    // instantly. downloadFile has no mimeType check -> simplest success path.
+    vi.useFakeTimers();
+    let n = 0;
+    const requestImpl = vi.fn(async () => {
+      n++;
+      return n === 1 ? resp(429) : resp(200);
+    });
+    const c = new GoogleDriveClient(fakeOAuth(), requestImpl as never);
+
+    // Act
+    const p = c.downloadFile("x");
+    await vi.runAllTimersAsync();
+    await p;
+
+    // Assert: called twice (429 -> retry -> 200).
+    expect(requestImpl).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it("does NOT retry a deterministic 404", async () => {
+    // Arrange
+    const requestImpl = vi.fn(async () => resp(404));
+    const c = new GoogleDriveClient(fakeOAuth(), requestImpl as never);
+
+    // Act + Assert: fails immediately, only one request.
+    await expect(c.downloadFile("x")).rejects.toThrow();
+    expect(requestImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up after MAX_RETRIES on persistent 500", async () => {
+    // Arrange
+    vi.useFakeTimers();
+    const requestImpl = vi.fn(async () => resp(500));
+    const c = new GoogleDriveClient(fakeOAuth(), requestImpl as never);
+
+    // Act
+    const p = c.downloadFile("x").catch((e) => e);
+    await vi.runAllTimersAsync();
+    await p;
+
+    // Assert: 1 initial + 4 retries = 5 attempts.
+    expect(requestImpl).toHaveBeenCalledTimes(5);
+    vi.useRealTimers();
+  });
+});

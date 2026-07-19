@@ -542,16 +542,91 @@ describe("SyncEngine.sync — Schutz vor Remote-Teilbaum-Verlust", () => {
 
 describe("SyncEngine.sync — lokale Ordner aus Datei-Elternketten abgeleitet", () => {
   it("erkennt einen befüllten lokalen Ordner als vorhanden, auch wenn getAllLoadedFiles() leer ist", async () => {
-    // Arrange: lokale Datei in Unterordner; getAllLoadedFiles() ist im Fake leer.
-    // Der Ordner "sub" muss trotzdem als lokal vorhanden gelten (aus der
-    // Elternkette von "sub/a.md" abgeleitet) und daher in Drive angelegt werden.
+    // Arrange: local file in subfolder; getAllLoadedFiles() is empty in the fake.
+    // The folder "sub" must still count as locally present (derived from the
+    // parent chain of "sub/a.md") and therefore be created in Drive.
     const { engine, vault, drive } = setup();
     vault.seed("sub/a.md", "inhalt");
 
     // Act
     await engine.sync(false);
 
-    // Assert: Ordner "sub" wurde in Drive angelegt (aus der Elternkette).
+    // Assert: folder "sub" was created in Drive (from the parent chain).
     expect(drive.calls.createFolderPath.map((c) => c.path)).toContain("sub");
+  });
+});
+
+describe("SyncEngine.sync — Hash-Cache (mtime+size)", () => {
+  it("liest eine unveränderte Datei NICHT erneut (nutzt gespeicherten MD5)", async () => {
+    // Arrange: file identical locally + in Drive, base matches exactly (mtime+size+md5).
+    const content = "unchanged content";
+    const md5 = md5Hex(content);
+    const size = new TextEncoder().encode(content).byteLength;
+    const { engine, vault, drive } = setup({
+      syncState: {
+        "keep.md": {
+          path: "keep.md",
+          local: true,
+          remote: true,
+          isFolder: false,
+          driveId: "d1",
+          md5,
+          size,
+          localMtime: 1_000,
+          remoteMtime: 1_000,
+        },
+      },
+    });
+    vault.seed("keep.md", content, 1_000); // mtime == base
+    drive.seed({ path: "keep.md", content, md5, id: "d1" });
+
+    // Act
+    const summary = await engine.sync(false);
+
+    // Assert: no transfer AND the file was not read (cache hit).
+    expect(summary?.uploaded).toBe(0);
+    expect(summary?.downloaded).toBe(0);
+    expect(vault.adapter.readBinaryCalls).not.toContain("keep.md");
+  });
+
+  it("liest die Datei neu, wenn die mtime abweicht (kein Cache-Hit)", async () => {
+    // Arrange: same size/content, but the file's mtime ≠ base -> suspect.
+    const content = "content";
+    const md5 = md5Hex(content);
+    const size = new TextEncoder().encode(content).byteLength;
+    const { engine, vault } = setup({
+      syncState: {
+        "f.md": {
+          path: "f.md",
+          local: true,
+          remote: true,
+          isFolder: false,
+          driveId: "d1",
+          md5,
+          size,
+          localMtime: 1_000, // base mtime
+          remoteMtime: 1_000,
+        },
+      },
+    });
+    vault.seed("f.md", content, 9_999); // different mtime -> cache miss
+
+    // Act
+    await engine.sync(false);
+
+    // Assert: file was read (re-hashed).
+    expect(vault.adapter.readBinaryCalls).toContain("f.md");
+  });
+
+  it("liest eine neue Datei ohne Base (erster Sync hasht wie gehabt)", async () => {
+    // Arrange
+    const { engine, vault } = setup();
+    vault.seed("new.md", "hello");
+
+    // Act
+    await engine.sync(false);
+
+    // Assert
+    expect(vault.adapter.readBinaryCalls).toContain("new.md");
   });
 });

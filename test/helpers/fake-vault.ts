@@ -78,9 +78,13 @@ export class FakeVault {
 class FakeAdapter {
   constructor(private files: Map<string, FakeEntry>) {}
 
+  /** Test assertion: which paths were read via readBinary (hash cache). */
+  public readBinaryCalls: string[] = [];
+
   async readBinary(path: string): Promise<ArrayBuffer> {
     const e = this.files.get(path);
     if (!e) throw new Error(`FakeAdapter: keine Datei ${path}`);
+    this.readBinaryCalls.push(path);
     return e.content;
   }
 

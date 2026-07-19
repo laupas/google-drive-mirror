@@ -6,28 +6,59 @@ import { MessageKey, t } from "./i18n";
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 
-/** appProperties-Schlüssel, unter dem der vault-relative Pfad gespeichert wird. */
+/** appProperties key under which the vault-relative path is stored. */
 const PATH_PROP = "obsidianPath";
 
 const FILE_FIELDS =
   "id,name,mimeType,modifiedTime,md5Checksum,size,trashed,parents,appProperties,driveId";
 
 /**
- * Für Shared Drives (Team Drives) müssen alle Requests supportsAllDrives=true
- * setzen. Bei normalem "My Drive" ist der Parameter unschädlich, daher immer an.
+ * For Shared Drives (Team Drives), all requests must set supportsAllDrives=true.
+ * On regular "My Drive" the parameter is harmless, so it's always on.
  */
 const SUPPORTS_ALL_DRIVES = "supportsAllDrives=true";
 
 /**
- * Dünner Wrapper über die Google-Drive-REST-API (v3).
+ * Thin wrapper over the Google Drive REST API (v3).
  *
- * Design: Statt die Vault-Ordnerhierarchie in Drive zu spiegeln, wird der
- * vollständige vault-relative Pfad in appProperties[obsidianPath] abgelegt.
- * Alle Sync-Dateien liegen flach im konfigurierten Drive-Wurzelordner.
- * Das eliminiert fehleranfällige Ordner-Reconciliation und Umbenennungs-Edge-Cases.
+ * Design: Instead of mirroring the vault folder hierarchy in Drive, the full
+ * vault-relative path is stored in appProperties[obsidianPath].
+ * All sync files sit flat in the configured Drive root folder.
+ * This eliminates error-prone folder reconciliation and rename edge cases.
  */
+/** How often a transiently failed request is retried. */
+const MAX_RETRIES = 4;
+/** Base for the exponential backoff (ms): 500, 1000, 2000, 4000 … */
+const RETRY_BASE_MS = 500;
+
+/** HTTP response from requestUrl (the subset the client uses). */
+export interface DriveResponse {
+  status: number;
+  text: string;
+  json: unknown;
+  arrayBuffer: ArrayBuffer;
+}
+
+/** Performs an HTTP request (injectable for tests). */
+export type RequestFn = (params: {
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string | ArrayBuffer;
+  contentType?: string;
+  throw?: boolean;
+}) => Promise<DriveResponse>;
+
 export class GoogleDriveClient {
-  constructor(private oauth: OAuthManager) {}
+  /**
+   * @param oauth    Token provider.
+   * @param requestImpl  HTTP implementation (default: Obsidian's requestUrl).
+   *                     Injectable so tests can verify retry/backoff.
+   */
+  constructor(
+    private oauth: OAuthManager,
+    private requestImpl: RequestFn = requestUrl as unknown as RequestFn
+  ) {}
 
   private async authHeader(): Promise<Record<string, string>> {
     const token = await this.oauth.getAccessToken();
@@ -35,15 +66,48 @@ export class GoogleDriveClient {
   }
 
   /**
-   * Listet alle (nicht-gelöschten und gelöschten) Dateien im Wurzelordner.
-   * Inklusive im Papierkorb liegender Dateien, damit der Reconciler
-   * Löschungen erkennen kann.
+   * Central request wrapper with retry + exponential backoff for TRANSIENT
+   * errors (429 rate limit, 5xx server, network exceptions). Deterministic
+   * 4xx (except 429) are NOT retried. Important during parallel execution,
+   * where Google responds with 429 more easily.
+   */
+  private async request(
+    params: Parameters<RequestFn>[0]
+  ): Promise<DriveResponse> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const resp = await this.requestImpl({ ...params, throw: false });
+        if (resp.status === 429 || (resp.status >= 500 && resp.status < 600)) {
+          if (attempt < MAX_RETRIES) {
+            await sleep(backoffMs(attempt));
+            continue;
+          }
+        }
+        return resp; // success or non-retryable status -> return.
+      } catch (e) {
+        // Network exception (no HTTP status) -> retryable.
+        lastErr = e;
+        if (attempt < MAX_RETRIES) {
+          await sleep(backoffMs(attempt));
+          continue;
+        }
+        throw e;
+      }
+    }
+    // Unreachable, but for TS completeness.
+    throw lastErr ?? new Error("request failed");
+  }
+
+  /**
+   * Lists all (non-deleted and deleted) files in the root folder.
+   * Includes trashed files so the reconciler can detect deletions.
    */
   /**
-   * Listet **rekursiv** alle Dateien unter dem Wurzelordner. Steigt in alle
-   * Unterordner ab und setzt bei jeder Datei `relativePath` = Pfad relativ zum
-   * Wurzelordner (aus der Ordnerkette abgeleitet, z.B. "sub/notiz.md"). So
-   * werden auch manuell in Drive angelegte Unterordner/Dateien korrekt erfasst.
+   * Lists **recursively** all files under the root folder. Descends into all
+   * subfolders and sets `relativePath` on each file = path relative to the
+   * root folder (derived from the folder chain, e.g. "sub/notiz.md"). This way
+   * subfolders/files created manually in Drive are also captured correctly.
    */
   async listFiles(
     rootFolderId: string,
@@ -96,7 +160,7 @@ export class GoogleDriveClient {
       }
       if (pageToken) params.set("pageToken", pageToken);
 
-      const resp = await requestUrl({
+      const resp = await this.request({
         url: `${DRIVE_API}/files?${params.toString()}`,
         method: "GET",
         headers: await this.authHeader(),
@@ -112,14 +176,14 @@ export class GoogleDriveClient {
     return out;
   }
 
-  /** Liefert den vault-relativen Pfad einer Drive-Datei. */
+  /** Returns the vault-relative path of a Drive file. */
   pathOf(f: DriveFile): string {
     return f.relativePath ?? f.name;
   }
 
-  /** Lädt den Binärinhalt einer Datei herunter. */
+  /** Downloads the binary content of a file. */
   async downloadFile(driveId: string): Promise<ArrayBuffer> {
-    const resp = await requestUrl({
+    const resp = await this.request({
       url: `${DRIVE_API}/files/${driveId}?alt=media&${SUPPORTS_ALL_DRIVES}`,
       method: "GET",
       headers: await this.authHeader(),
@@ -168,28 +232,32 @@ export class GoogleDriveClient {
   ): Promise<string> {
     const dir = dirname(filePath);
     if (!dir) return rootFolderId;
-
-    let parentId = rootFolderId;
-    let accumulated = "";
-    for (const segment of dir.split("/")) {
-      accumulated = accumulated ? `${accumulated}/${segment}` : segment;
-      const cached = this.folderCache.get(accumulated);
-      if (cached) {
-        parentId = cached;
-        continue;
-      }
-      parentId = await this.findOrCreateChildFolder(parentId, segment, driveId);
-      this.folderCache.set(accumulated, parentId);
-    }
-    return parentId;
+    return this.resolveFolderPath(rootFolderId, dir, driveId);
   }
 
   /**
-   * Stellt sicher, dass der Ordner unter `relativePath` in Drive existiert
-   * (inkl. aller Zwischenordner). Für das Anlegen (auch leerer) Ordner.
-   * Gibt die Drive-ID des Zielordners zurück.
+   * Ensures the folder at `relativePath` exists in Drive (including all
+   * intermediate folders). For creating (even empty) folders.
+   * Returns the Drive ID of the target folder.
    */
   async createFolderPath(
+    rootFolderId: string,
+    relativePath: string,
+    driveId?: string
+  ): Promise<string> {
+    return this.resolveFolderPath(rootFolderId, relativePath, driveId);
+  }
+
+  /**
+   * Resolves a slash-separated folder path to its Drive ID, creating missing
+   * intermediate folders. Shared by ensureFolderPath/createFolderPath.
+   *
+   * PARALLEL-SAFE: caches the in-flight PROMISE per accumulated path (not just
+   * the finished ID). If two concurrent uploads need the same not-yet-created
+   * folder, both await the same promise instead of each creating a duplicate
+   * folder in Drive.
+   */
+  private async resolveFolderPath(
     rootFolderId: string,
     relativePath: string,
     driveId?: string
@@ -199,24 +267,32 @@ export class GoogleDriveClient {
     for (const segment of relativePath.split("/")) {
       if (!segment) continue;
       accumulated = accumulated ? `${accumulated}/${segment}` : segment;
-      const cached = this.folderCache.get(accumulated);
-      if (cached) {
-        parentId = cached;
-        continue;
+
+      let pending = this.folderCache.get(accumulated);
+      if (!pending) {
+        // Capture parent in a local so the async closure uses a stable value.
+        const parent = parentId;
+        pending = this.findOrCreateChildFolder(parent, segment, driveId);
+        this.folderCache.set(accumulated, pending);
+        // On failure, drop the cache entry so a later run can retry.
+        pending.catch(() => {
+          if (this.folderCache.get(accumulated) === pending) {
+            this.folderCache.delete(accumulated);
+          }
+        });
       }
-      parentId = await this.findOrCreateChildFolder(parentId, segment, driveId);
-      this.folderCache.set(accumulated, parentId);
+      parentId = await pending;
     }
     return parentId;
   }
 
-  /** Verschiebt einen Ordner (mit Inhalt) in den Drive-Papierkorb. */
+  /** Moves a folder (with its contents) to the Drive trash. */
   async trashFolder(folderId: string): Promise<void> {
-    // Gleiche Semantik wie trashFile — Drive trasht Ordner samt Inhalt.
+    // Same semantics as trashFile — Drive trashes the folder along with its contents.
     await this.trashFile(folderId);
   }
 
-  /** Sucht einen Unterordner nach Namen; legt ihn an, falls nicht vorhanden. */
+  /** Searches a subfolder by name; creates it if not present. */
   private async findOrCreateChildFolder(
     parentId: string,
     name: string,
@@ -237,7 +313,7 @@ export class GoogleDriveClient {
       params.set("corpora", "drive");
       params.set("driveId", driveId);
     }
-    const resp = await requestUrl({
+    const resp = await this.request({
       url: `${DRIVE_API}/files?${params.toString()}`,
       method: "GET",
       headers: await this.authHeader(),
@@ -247,8 +323,8 @@ export class GoogleDriveClient {
     const existing = (resp.json as { files?: RawDriveFile[] }).files?.[0];
     if (existing) return existing.id;
 
-    // Nicht gefunden -> anlegen.
-    const createResp = await requestUrl({
+    // Not found -> create.
+    const createResp = await this.request({
       url: `${DRIVE_API}/files?fields=id,name&${SUPPORTS_ALL_DRIVES}`,
       method: "POST",
       headers: {
@@ -266,15 +342,19 @@ export class GoogleDriveClient {
     return (createResp.json as RawDriveFile).id;
   }
 
-  /** Ordner-Pfad-Cache pro Client-Instanz (relativer Pfad -> Drive-Ordner-ID). */
-  private folderCache = new Map<string, string>();
+  /**
+   * Folder path cache per client instance: relative path -> in-flight/resolved
+   * promise of the Drive folder ID. Caching the PROMISE (not the string)
+   * deduplicates concurrent creations of the same folder (parallel uploads).
+   */
+  private folderCache = new Map<string, Promise<string>>();
 
-  /** Leert den Ordner-Cache (z.B. zu Beginn eines Sync-Laufs). */
+  /** Clears the folder cache (e.g. at the start of a sync run). */
   clearFolderCache(): void {
     this.folderCache.clear();
   }
 
-  /** Aktualisiert den Inhalt einer bestehenden Datei. */
+  /** Updates the content of an existing file. */
   async updateFile(
     driveId: string,
     path: string,
@@ -294,9 +374,9 @@ export class GoogleDriveClient {
     return this.mapFile(resp.json as RawDriveFile);
   }
 
-  /** Verschiebt eine Datei in den Drive-Papierkorb (statt harter Löschung). */
+  /** Moves a file to the Drive trash (instead of a hard delete). */
   async trashFile(driveId: string): Promise<void> {
-    const resp = await requestUrl({
+    const resp = await this.request({
       url: `${DRIVE_API}/files/${driveId}?fields=id,trashed&${SUPPORTS_ALL_DRIVES}`,
       method: "PATCH",
       headers: {
@@ -310,14 +390,14 @@ export class GoogleDriveClient {
   }
 
   /**
-   * Prüft, ob eine Ordner-ID existiert und ein Ordner ist (für Settings-Validierung).
-   * Liefert zusätzlich `driveId` (gesetzt, wenn der Ordner in einem Shared Drive
-   * liegt; sonst leer für "My Drive").
+   * Checks whether a folder ID exists and is a folder (for settings validation).
+   * Additionally returns `driveId` (set if the folder lives in a Shared Drive;
+   * otherwise empty for "My Drive").
    */
   async getFolder(
     folderId: string
   ): Promise<{ id: string; name: string; driveId: string }> {
-    const resp = await requestUrl({
+    const resp = await this.request({
       url: `${DRIVE_API}/files/${folderId}?fields=id,name,mimeType,driveId&${SUPPORTS_ALL_DRIVES}`,
       method: "GET",
       headers: await this.authHeader(),
@@ -353,12 +433,12 @@ export class GoogleDriveClient {
       fields: "files(id,name,driveId)",
       pageSize: String(Math.min(100, limit)),
       orderBy: "modifiedTime desc",
-      // Auch Ordner aus Shared Drives in die Vorschläge aufnehmen.
+      // Also include folders from Shared Drives in the suggestions.
       supportsAllDrives: "true",
       includeItemsFromAllDrives: "true",
       corpora: "allDrives",
     });
-    const resp = await requestUrl({
+    const resp = await this.request({
       url: `${DRIVE_API}/files?${params.toString()}`,
       method: "GET",
       headers: await this.authHeader(),
@@ -373,9 +453,9 @@ export class GoogleDriveClient {
     }));
   }
 
-  /** Erstellt einen neuen Ordner unter "My Drive" (root) und gibt ihn zurück. */
+  /** Creates a new folder under "My Drive" (root) and returns it. */
   async createFolder(name: string): Promise<{ id: string; name: string }> {
-    const resp = await requestUrl({
+    const resp = await this.request({
       url: `${DRIVE_API}/files?fields=id,name`,
       method: "POST",
       headers: {
@@ -418,7 +498,7 @@ export class GoogleDriveClient {
     bodyBuf.set(new Uint8Array(content), head.byteLength);
     bodyBuf.set(tail, head.byteLength + content.byteLength);
 
-    return requestUrl({
+    return this.request({
       url,
       method,
       headers: {
@@ -489,8 +569,19 @@ function basename(path: string): string {
   return idx === -1 ? path : path.slice(idx + 1);
 }
 
-/** Verzeichnisanteil eines Pfads ("" wenn keine Ordner enthalten). */
+/** Directory portion of a path ("" if no folders are included). */
 function dirname(path: string): string {
   const idx = path.lastIndexOf("/");
   return idx === -1 ? "" : path.slice(0, idx);
+}
+
+/** Exponential backoff with slight jitter (ms) for retry attempt `attempt`. */
+function backoffMs(attempt: number): number {
+  const base = RETRY_BASE_MS * Math.pow(2, attempt);
+  // ±20% jitter to avoid a thundering herd of parallel requests.
+  return Math.round(base * (0.8 + Math.random() * 0.4));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

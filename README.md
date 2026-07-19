@@ -163,6 +163,14 @@ Architecture:
 
 ---
 
+## Performance (large vaults)
+
+Syncing thousands of files is optimized in three ways:
+
+- **Hash cache:** unchanged files are not re-read or re-hashed. A file's MD5 is only recomputed when its size or modification time changed (like rsync). So the first sync is the slow one; every later sync mostly skips hashing.
+- **Parallel transfers:** uploads and downloads run several at a time (bounded concurrency), which is dramatically faster than one-by-one over the network.
+- **Automatic retry:** transient Google errors (rate limits, server hiccups) are retried with exponential backoff, so large runs don't fail on a single blip.
+
 ## Interrupting a sync
 
 A sync can be interrupted at any time (closing Obsidian, a crash) — **without data loss**:
@@ -170,13 +178,13 @@ A sync can be interrupted at any time (closing Obsidian, a crash) — **without 
 - Files already transferred are fully present on the other side (every upload is atomic, no half files are created).
 - Progress is checkpointed **every 50 files**, plus once at the end. An interruption therefore costs at most the last few files of repeated work.
 - The **next sync resumes** where it was interrupted, transferring only what's missing — files already present are recognized by content comparison and not transferred again.
-- Note: for very large vaults, the next run still reads and checks **all** local files (needed for reconciliation); this takes time but transfers nothing twice.
+- Thanks to the hash cache, the next run only re-reads files that actually changed, so re-checking a large vault after an interruption is fast.
 
 ## Known limitations / to-dos
 
 - **Renames** are currently handled as delete + re-create (no rename tracking via the Drive ID). Works correctly, but generates unnecessary traffic.
 - **Large files** are transferred via multipart upload in a single request (no resumable upload), and each file is read fully into RAM. For individual very large files (several hundred MB+) this is risky; for many small/medium files it's fine.
-- **No delta/changes API:** Drive is polled via a full listing. For very large folders, the Drive Changes API (`changes.list` with `startPageToken`) would be more efficient.
+- **No delta/changes API:** Drive is polled via a full listing. For very large folders, the Drive Changes API (`changes.list` with `startPageToken`) would reduce the per-sync listing cost further. Deliberately not implemented yet — it requires caching the full remote state between runs, which is high-risk for a data-loss-sensitive plugin.
 - **Conflict strategy** is fixed to "newer wins". A "keep both" option (conflict copy) could be added to the reconciler.
 
 ## License

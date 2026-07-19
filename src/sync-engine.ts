@@ -15,31 +15,38 @@ import {
   SyncSummary,
 } from "./types";
 
-/** md5 aus dem Node-Crypto-Modul (Desktop-only Plugin). */
+/** md5 from the Node crypto module (desktop-only plugin). */
 import { createHash } from "crypto";
 
 /**
- * Nach so vielen ausgeführten (echten) Aktionen wird der Sync-State
- * zwischengespeichert ("Checkpoint"). Schützt große Läufe gegen Abbruch, ohne
- * nach jeder Datei die komplette State-Datei neu zu schreiben (O(n²)-Writes).
+ * After this many executed (real) actions the sync state is
+ * checkpointed. Protects large runs against interruption, without
+ * rewriting the entire state file after each file (O(n²) writes).
  */
 const CHECKPOINT_EVERY = 50;
 
 /**
- * Eingefrorene Kopie der scope-relevanten Settings-Felder für die Dauer EINES
- * Sync-Laufs. Verhindert, dass ein Ordner-/Scope-Wechsel mitten im Lauf live
- * durchschlägt (siehe `SyncEngine.active`).
+ * How many file transfers (upload/download/delete) run concurrently. Network
+ * I/O parallelizes well; kept moderate to stay within Google's rate limits
+ * (transient 429s are retried by the Drive client's request wrapper).
+ */
+const MAX_CONCURRENCY = 6;
+
+/**
+ * Frozen copy of the scope-relevant settings fields for the duration of ONE
+ * sync run. Prevents a folder/scope change in the middle of a run from taking
+ * effect live (see `SyncEngine.active`).
  */
 interface ScopeSnapshot {
   driveFolderId: string;
   driveSharedId: string;
   localFolder: string;
   allowedExtensions: string;
-  /** Vorgeparste Ignore-Muster (Blacklist) für die Dauer des Laufs. */
+  /** Pre-parsed ignore patterns (blacklist) for the duration of the run. */
   ignorePatterns: string[];
 }
 
-/** Leerer Scope-Snapshot (vor dem ersten Lauf). */
+/** Empty scope snapshot (before the first run). */
 function emptyScope(): ScopeSnapshot {
   return {
     driveFolderId: "",
@@ -278,37 +285,29 @@ export class SyncEngine {
         }
       }
 
-      // 2) Datei-Aktionen. Alle CHECKPOINT_EVERY Aktionen den State sichern,
-      //    damit ein Abbruch (App zu / Absturz) bei großen Läufen nur die
-      //    letzten paar Aktionen kostet, nicht den gesamten Fortschritt.
+      // 2a) noop actions only refresh the base (no I/O) — handle them quickly
+      //     and sequentially first.
+      for (const action of actions) {
+        if (action.type === "noop") {
+          await this.applyAction(action, local, remote, summary);
+        }
+      }
+
+      // 2b) Real file actions run through a bounded concurrency pool. File
+      //     transfers are independent (distinct paths → distinct state keys), so
+      //     parallel I/O is safe and dramatically faster on large vaults. The
+      //     folder cache (Drive) and ensureParentDir (local) are parallel-safe.
+      //     State is checkpointed every CHECKPOINT_EVERY completed actions so an
+      //     interruption costs only the last few actions.
       let done = 0;
       let sinceCheckpoint = 0;
-      for (const action of actions) {
-        if (action.type !== "noop") {
-          done++;
-          this.status.update(
-            t("engineActionProgress", {
-              action: describeAction(action),
-              done,
-              total: work.length,
-            }),
-            done,
-            work.length
-          );
-        }
+      await runPool(work, MAX_CONCURRENCY, async (action) => {
         try {
           await this.applyAction(action, local, remote, summary);
-          if (action.type !== "noop") {
-            this.status.append(
-              "info",
-              t("engineActionDone", { action: describeAction(action) })
-            );
-            sinceCheckpoint++;
-            if (sinceCheckpoint >= CHECKPOINT_EVERY) {
-              sinceCheckpoint = 0;
-              await this.checkpoint();
-            }
-          }
+          this.status.append(
+            "info",
+            t("engineActionDone", { action: describeAction(action) })
+          );
         } catch (e) {
           const detail = t("engineActionError", {
             type: action.type,
@@ -317,14 +316,28 @@ export class SyncEngine {
           });
           summary.errors.push(detail);
           this.status.append("error", detail);
-          // Vollständigen Fehler in die Developer-Console schreiben.
           log.error("Aktion fehlgeschlagen:", detail, e);
         }
-      }
+        // Progress + checkpoint after each completed action.
+        done++;
+        this.status.update(
+          t("engineActionProgress", {
+            action: describeAction(action),
+            done,
+            total: work.length,
+          }),
+          done,
+          work.length
+        );
+        if (++sinceCheckpoint >= CHECKPOINT_EVERY) {
+          sinceCheckpoint = 0;
+          await this.checkpoint();
+        }
+      });
 
-      // 3) Ordner LÖSCHEN / BEHALTEN (nach Dateien; tiefste zuerst).
-      //    keepRemoteFolder macht keine Drive-Operation, nur State — schadet in
-      //    dieser Phase nicht und hält die Ordner-Behandlung an einer Stelle.
+      // 3) DELETE / KEEP folders (after files; deepest first).
+      //    keepRemoteFolder performs no Drive operation, only state — harmless in
+      //    this phase and keeps the folder handling in one place.
       const folderDeletes = folderActions
         .filter(
           (a) =>
@@ -574,42 +587,60 @@ export class SyncEngine {
       if (!this.inScope(file.path)) continue;
       if (!this.extensionAllowed(file.path)) continue;
       const rel = this.toRelative(file.path, prefix);
-      // Ignore-Muster prüfen den SYNC-RELATIVEN Pfad (wie die Drive-Seite).
+      // Ignore patterns check the SYNC-RELATIVE path (like the Drive side).
       if (this.isIgnored(rel)) continue;
+
+      const mtimeMs = file.stat.mtime;
+      const size = file.stat.size;
+
+      // Hash cache: mtime+size unchanged vs. the base -> reuse the stored
+      // MD5, do NOT read the file.
+      const prev = this.state.get(rel);
+      if (
+        prev &&
+        !prev.isFolder &&
+        prev.localMtime === mtimeMs &&
+        prev.size === size &&
+        prev.md5
+      ) {
+        result.set(rel, { path: rel, md5: prev.md5, size, mtimeMs });
+        continue;
+      }
+
+      // Changed / new / no cache -> read and hash the content.
       const content = await this.vault.adapter.readBinary(file.path);
-      const md5 = md5Hex(content);
       result.set(rel, {
         path: rel,
-        md5,
+        md5: md5Hex(content),
         size: content.byteLength,
-        mtimeMs: file.stat.mtime,
+        mtimeMs,
       });
     }
     return result;
   }
 
   /**
-   * Erhebt alle lokalen Ordner im Scope (relative Pfade).
+   * Collects all local folders in scope (relative paths).
    *
-   * Zwei Quellen, vereinigt:
-   *  1. Die Elternordner-Kette JEDER gesammelten Datei (`fileRelPaths`). Das ist
-   *     die AUTORITATIVE Quelle: ein Ordner, der eine gesyncte Datei enthält,
-   *     existiert garantiert. Ohne diese Ableitung könnte ein transienter
-   *     Aussetzer von `getAllLoadedFiles()` einen befüllten Ordner als „fehlt
-   *     lokal" melden → `deleteRemoteFolder` würde den ganzen Drive-Teilbaum in
-   *     den Papierkorb schieben (Datenverlust).
-   *  2. `getAllLoadedFiles()` (TFolder) — nur nötig, um zusätzlich LEERE Ordner
-   *     zu erfassen (die haben keine Datei, aus der man sie ableiten könnte).
+   * Two sources, unioned:
+   *  1. The parent-folder chain of EVERY collected file (`fileRelPaths`). This is
+   *     the AUTHORITATIVE source: a folder that contains a synced file
+   *     is guaranteed to exist. Without this derivation, a transient
+   *     glitch of `getAllLoadedFiles()` could report a populated folder as "missing
+   *     locally" → `deleteRemoteFolder` would move the entire Drive subtree to
+   *     the trash (data loss).
+   *  2. `getAllLoadedFiles()` (TFolder) — only needed to additionally capture EMPTY
+   *     folders (which have no file to derive them from).
    *
-   * Systemordner und die Wurzel selbst sind ausgeschlossen.
+   * System folders and the root itself are excluded.
    */
   private collectLocalFolders(fileRelPaths: Iterable<string>): Set<string> {
     const prefix = this.folderPrefix();
     const result = new Set<string>();
 
-    // 1) Ordner aus den Elternketten der gesammelten Dateien ableiten.
-    //    (fileRelPaths enthält bereits nur nicht-ignorierte Dateien; ein
-    //    Elternordner einer erlaubten Datei ist bewusst NICHT ignoriert.)
+    // 1) Derive folders from the parent chains of the collected files.
+    //    (fileRelPaths already contains only non-ignored files; a
+    //    parent folder of an allowed file is deliberately NOT ignored.)
     for (const rel of fileRelPaths) {
       let idx = rel.lastIndexOf("/");
       while (idx > 0) {
@@ -789,16 +820,22 @@ export class SyncEngine {
     const idx = absPath.lastIndexOf("/");
     if (idx <= 0) return;
     const dir = absPath.slice(0, idx);
-    if (!(await this.vault.adapter.exists(dir))) {
+    if (await this.vault.adapter.exists(dir)) return;
+    try {
       await this.vault.adapter.mkdir(dir);
+    } catch (e) {
+      // Parallel-safe: with concurrent downloads two callers may race here and
+      // both attempt mkdir. If the folder exists now, that's fine; otherwise
+      // rethrow the real error.
+      if (!(await this.vault.adapter.exists(dir))) throw e;
     }
   }
 
-  // ---------- Pfad-/Scope-Helfer ----------
+  // ---------- Path/scope helpers ----------
 
   /**
-   * Prüft, ob die Dateiendung laut Filter erlaubt ist. Leerer Filter =
-   * alles erlaubt. Vergleich case-insensitive, ohne führenden Punkt.
+   * Checks whether the file extension is allowed per the filter. Empty filter =
+   * everything allowed. Comparison is case-insensitive, without a leading dot.
    */
   private extensionAllowed(path: string): boolean {
     const raw = this.active.allowedExtensions.trim();
@@ -879,16 +916,45 @@ function md5Hex(buf: ArrayBuffer): string {
   return createHash("md5").update(Buffer.from(buf)).digest("hex");
 }
 
-/** Pfadtiefe (Anzahl der "/"-Segmente) — für Ordner-Sortierung. */
+/** Path depth (number of "/" segments) — for folder sorting. */
 function depth(path: string): number {
   return path.split("/").length;
+}
+
+/**
+ * Runs `worker` over all `items` with at most `limit` concurrent executions.
+ * Order of completion is not guaranteed; every item is processed exactly once.
+ * A worker that throws is NOT caught here — callers handle per-item errors
+ * inside the worker (as the engine does) so one failure doesn't stop the pool.
+ */
+export async function runPool<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>
+): Promise<void> {
+  if (items.length === 0) return;
+  const n = Math.max(1, Math.min(limit, items.length));
+  let next = 0;
+  const runners: Promise<void>[] = [];
+  for (let i = 0; i < n; i++) {
+    runners.push(
+      (async () => {
+        // Each runner pulls the next index until the queue is drained.
+        while (next < items.length) {
+          const idx = next++;
+          await worker(items[idx]);
+        }
+      })()
+    );
+  }
+  await Promise.all(runners);
 }
 
 function pathOfAction(a: SyncAction): string {
   return "path" in a ? a.path : "?";
 }
 
-/** Menschenlesbare Beschreibung einer Aktion für Status/Log. */
+/** Human-readable description of an action for status/log. */
 function describeAction(a: SyncAction): string {
   const p = pathOfAction(a);
   switch (a.type) {
