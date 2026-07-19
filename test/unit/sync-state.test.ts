@@ -1,7 +1,7 @@
 /**
- * Unit-Tests für SyncStateStore — den persistenten "Base"-Speicher.
- * Format: AAA. Der Store hält seinen Zustand in einer eigenen Datei
- * (sync-state.json) via PluginStorage — hier über einen In-Memory-Fake.
+ * Unit tests for SyncStateStore — the persistent "base" store.
+ * Format: AAA. The store keeps its state in its own file
+ * (sync-state.json) via PluginStorage — here through an in-memory fake.
  */
 
 import { describe, it, expect } from "vitest";
@@ -9,7 +9,7 @@ import { SyncStateStore } from "../../src/sync-state";
 import { baseEntry } from "../helpers/factories";
 import { FakeStorage } from "../helpers/fake-storage";
 
-/** Frischer Store über einen leeren In-Memory-Storage je Test. */
+/** Fresh store over an empty in-memory storage per test. */
 function freshStore(): { store: SyncStateStore; storage: FakeStorage } {
   const storage = new FakeStorage();
   const store = new SyncStateStore(storage.asStorage(), () => "test-scope");

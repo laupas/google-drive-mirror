@@ -12,8 +12,8 @@ import { initLocale, t } from "./i18n";
 import { isIgnored, parseIgnorePatterns } from "./ignore";
 
 /**
- * Einstiegspunkt des Plugins. Verdrahtet OAuth, Drive-Client, Sync-Engine
- * und die Auto-Sync-Trigger (lokale Vault-Events + Drive-Poll-Intervall).
+ * Plugin entry point. Wires up OAuth, Drive client, sync engine
+ * and the auto-sync triggers (local vault events + Drive poll interval).
  */
 export default class GoogleDriveSyncPlugin extends Plugin {
   settings!: PluginSettings;
@@ -27,11 +27,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   private pollHandle: number | null = null;
   private debounceHandle: number | null = null;
   private statusBarEl: HTMLElement | null = null;
-  /** Pfade, die durch den Sync selbst geschrieben wurden — Events ignorieren. */
+  /** Paths written by the sync itself — ignore their events. */
   private suppressedPaths = new Set<string>();
 
   async onload(): Promise<void> {
-    // UI-Sprache an die Obsidian-Einstellung koppeln (Fallback Englisch).
+    // Couple the UI language to the Obsidian setting (fallback English).
     initLocale();
     const raw = await this.loadSettings();
     setDebugLogging(this.settings.debugLogging);
@@ -41,10 +41,10 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
     this.storage = new PluginStorage(this.app.vault, this.manifest.id);
 
-    // Sync-State aus eigener Datei laden; ggf. aus altem data.json migrieren.
-    // Die Scope-ID bindet die Base an Vault + Drive-Ordner. Wird die
-    // sync-state.json aus einem anderen Vault kopiert, passt sie nicht und die
-    // Base wird verworfen (statt fälschlich alles zu löschen).
+    // Load sync state from its own file; migrate from old data.json if needed.
+    // The scope ID binds the base to vault + Drive folder. If the
+    // sync-state.json is copied from another vault, it won't match and the
+    // base is discarded (instead of wrongly deleting everything).
     this.state = new SyncStateStore(this.storage, () => this.scopeId());
     await this.state.load(
       raw && raw.syncState
@@ -52,7 +52,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
         : undefined
     );
 
-    // Log aus eigener Datei laden; Retention-Dauer aus Settings.
+    // Load log from its own file; retention duration from settings.
     this.status = new SyncStatus(
       this.storage,
       () => this.settings.logRetentionHours
@@ -69,14 +69,14 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
     this.addSettingTab(new SettingsTab(this.app, this));
 
-    // Statusleiste: zeigt Live-Fortschritt des Syncs.
+    // Status bar: shows live progress of the sync.
     this.statusBarEl = this.addStatusBarItem();
     this.statusBarEl.addClass("gds-statusbar");
     this.statusBarEl.onClickEvent(() => void this.runSync(true));
     this.status.subscribe(() => this.renderStatusBar());
     this.renderStatusBar();
 
-    // Ribbon-Icon für schnellen manuellen Sync.
+    // Ribbon icon for quick manual sync.
     this.addRibbonIcon("refresh-cw", t("ribbonSyncTooltip"), () => {
       void this.runSync(true);
     });
@@ -93,7 +93,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       callback: () => void this.login(),
     });
 
-    // Lokale Änderungen beobachten (nur bei aktivem Auto-Sync relevant).
+    // Watch local changes (only relevant when auto-sync is active).
     this.registerEvent(
       this.app.vault.on("modify", (f) => this.onLocalChange(f))
     );
@@ -107,7 +107,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       this.app.vault.on("rename", (f) => this.onLocalChange(f))
     );
 
-    // Beim Start einmal syncen (holt Drive-Änderungen), wenn konfiguriert.
+    // Sync once at startup (fetches Drive changes), if configured.
     this.app.workspace.onLayoutReady(() => {
       if (this.settings.autoSyncEnabled && this.oauth.isConfigured()) {
         void this.runSync(false);
@@ -120,9 +120,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.clearTimers();
   }
 
-  // ---------- Sync-Auslöser ----------
+  // ---------- Sync triggers ----------
 
-  /** Manueller/expliziter Sync. */
+  /** Manual/explicit sync. */
   async runSync(showNotice: boolean): Promise<void> {
     if (this.engine.isRunning()) {
       if (showNotice) new Notice(t("noticeSyncAlreadyRunning"));
@@ -134,7 +134,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       }
       return;
     }
-    // Leichter Ticker, damit die verstrichene Zeit auch ohne neue Events tickt.
+    // Lightweight ticker so the elapsed time keeps updating even without new events.
     const ticker = window.setInterval(() => this.status.touch(), 1000);
     try {
       await this.withSuppressedEvents(async () => {
@@ -145,12 +145,12 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     }
   }
 
-  /** Läuft gerade ein Sync? (für die UI). */
+  /** Is a sync currently running? (for the UI). */
   isSyncing(): boolean {
     return this.engine.isRunning();
   }
 
-  /** Aktualisiert die Statusleiste anhand des aktuellen Sync-Status. */
+  /** Updates the status bar based on the current sync status. */
   private renderStatusBar(): void {
     if (!this.statusBarEl) return;
     const p = this.status.getProgress();
@@ -182,13 +182,13 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.statusBarEl.title = t("statusBarTooltip");
   }
 
-  /** Reagiert auf lokale Vault-Änderungen (debounced Upload-Sync). */
+  /** Reacts to local vault changes (debounced upload sync). */
   private onLocalChange(file: TAbstractFile): void {
     if (!this.settings.autoSyncEnabled) return;
     if (!this.oauth.isConfigured()) return;
-    // TAbstractFile (Datei ODER Ordner) hat immer einen Pfad; alles ohne Pfad
-    // ist kein sync-relevantes Objekt. Das eigentliche Scope-Filtern macht
-    // isInScope() weiter unten (Ordner dürfen einen Sync auslösen).
+    // TAbstractFile (file OR folder) always has a path; anything without a path
+    // is not a sync-relevant object. The actual scope filtering is done by
+    // isInScope() further below (folders may trigger a sync).
     if (!file || !file.path) return;
     if (this.suppressedPaths.has(file.path)) return;
     if (!this.isInScope(file.path)) return;
@@ -200,7 +200,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     }, this.settings.localDebounceMs);
   }
 
-  /** (Neu-)Konfiguriert den Drive-Poll-Timer entsprechend den Settings. */
+  /** (Re-)configures the Drive poll timer according to the settings. */
   reconfigureAutoSync(): void {
     if (this.pollHandle !== null) {
       window.clearInterval(this.pollHandle);
@@ -217,10 +217,10 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.registerInterval(this.pollHandle);
   }
 
-  /** Interaktiver Google-Login. */
+  /** Interactive Google login. */
   async login(): Promise<void> {
-    // System-Browser explizit öffnen (nicht ein Electron-Popup), damit der
-    // Loopback-Redirect zuverlässig beim lokalen Server landet.
+    // Explicitly open the system browser (not an Electron popup) so the
+    // loopback redirect reliably lands at the local server.
     await this.oauth.openLogin((url) => {
       window.open(url, "_blank");
     });
@@ -233,10 +233,10 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   }
 
   /**
-   * Setzt den Drive-Wurzelordner. Ändert sich die Ordner-ID gegenüber der
-   * bisherigen, wird die Sync-Base geleert — sonst würde der Reconciler die
-   * Dateien des NEUEN Ordners gegen die Base des ALTEN Ordners vergleichen und
-   * z.B. lokale Dateien fälschlich als „remote gelöscht" behandeln.
+   * Sets the Drive root folder. If the folder ID changes from the previous
+   * one, the sync base is cleared — otherwise the reconciler would compare the
+   * files of the NEW folder against the base of the OLD folder and e.g. treat
+   * local files wrongly as "deleted remotely".
    */
   async setDriveFolder(id: string, name: string, sharedId: string): Promise<void> {
     const changed = this.settings.driveFolderId !== id;
@@ -251,9 +251,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   }
 
   /**
-   * Setzt den lokalen Sync-Ordner ("" = ganzer Vault). Ändert sich der Scope,
-   * wird die Sync-Base geleert (analog zum Drive-Ordnerwechsel), damit der
-   * Reconciler nicht Dateien eines anderen Scopes gegen die alte Base vergleicht.
+   * Sets the local sync folder ("" = whole vault). If the scope changes, the
+   * sync base is cleared (analogous to changing the Drive folder), so the
+   * reconciler doesn't compare files of a different scope against the old base.
    */
   async setLocalFolder(folder: string): Promise<void> {
     const changed = this.settings.localFolder !== folder;
@@ -265,26 +265,26 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     await this.saveSettings();
   }
 
-  /** Leert die Sync-Historie (nicht die Dateien) und persistiert. */
+  /** Clears the sync history (not the files) and persists. */
   async resetSyncBase(): Promise<void> {
     this.state.clear();
     await this.state.save();
   }
 
-  /** Zeitstempel des letzten erfolgreichen Syncs (ms; 0 = nie). */
+  /** Timestamp of the last successful sync (ms; 0 = never). */
   getLastSyncMs(): number {
     return this.state.getLastSyncMs();
   }
 
-  /** Alle Sync-State-Einträge (für den Sync-Baum in den Settings). */
+  /** All sync-state entries (for the sync tree in the settings). */
   getSyncEntries(): SyncStateEntry[] {
     return this.state.all();
   }
 
   /**
-   * Markiert einen „nur in Drive"-Eintrag (Datei ODER Ordner) zum
-   * Wiederherstellen: entfernt das keptRemoteOnly-Flag, sodass er beim nächsten
-   * Sync heruntergeladen/lokal angelegt wird. Persistiert sofort.
+   * Marks a "Drive-only" entry (file OR folder) for restoration: removes the
+   * keptRemoteOnly flag so it is downloaded/created locally on the next sync.
+   * Persists immediately.
    */
   async restoreRemoteOnly(path: string): Promise<void> {
     const entry = this.state.get(path);
@@ -294,9 +294,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   }
 
   /**
-   * Eindeutige Identität von Vault + Drive-Ordner + lokalem Scope. Bindet die
-   * Sync-Base an genau diese Kombination, damit eine aus einem anderen Vault
-   * kopierte Base erkannt und verworfen wird.
+   * Unique identity of vault + Drive folder + local scope. Binds the sync base
+   * to exactly this combination, so a base copied from another vault is
+   * detected and discarded.
    */
   private scopeId(): string {
     const vault = this.app.vault.getName();
@@ -305,16 +305,16 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     return `${vault}::${drive}::${local}`;
   }
 
-  // ---------- Event-Unterdrückung während Sync-Schreibvorgängen ----------
+  // ---------- Event suppression during sync writes ----------
 
   /**
-   * Während der Sync selbst Dateien schreibt, dürfen die dadurch ausgelösten
-   * modify/create/delete-Events keinen weiteren Sync antriggern. Wir markieren
-   * kurzzeitig alle aktuell im Scope liegenden Pfade als unterdrückt.
+   * While the sync itself writes files, the modify/create/delete events it
+   * triggers must not start another sync. We briefly mark all paths currently
+   * in scope as suppressed.
    */
   private async withSuppressedEvents(fn: () => Promise<void>): Promise<void> {
-    // Grobe, aber robuste Strategie: alle Scope-Pfade während des Laufs
-    // ignorieren; nach kurzer Verzögerung wieder freigeben.
+    // Coarse but robust strategy: ignore all scope paths during the run;
+    // release them again after a short delay.
     const snapshot = this.app.vault
       .getFiles()
       .map((f) => f.path)
@@ -323,13 +323,13 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     try {
       await fn();
     } finally {
-      // Verzögerte Freigabe, damit noch nachlaufende Events gefiltert werden.
+      // Delayed release so trailing events are still filtered.
       window.setTimeout(() => this.suppressedPaths.clear(), 1500);
     }
   }
 
   private isInScope(vaultPath: string): boolean {
-    // Systemordner nie synchronisieren (v.a. beim ganzen Vault).
+    // Never sync system folders (especially for the whole vault).
     const p = vaultPath.startsWith("/") ? vaultPath.slice(1) : vaultPath;
     if (p === ".obsidian" || p.startsWith(".obsidian/")) return false;
     if (p === ".trash" || p.startsWith(".trash/")) return false;
@@ -343,8 +343,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       rel = vaultPath === norm ? "" : vaultPath.slice(prefix.length);
     }
 
-    // Ignore-Muster (Blacklist) auf den sync-relativen Pfad anwenden — analog
-    // zur Engine, damit eine ignorierte Datei keinen Auto-Sync auslöst.
+    // Apply ignore patterns (blacklist) to the sync-relative path — analogous
+    // to the engine, so an ignored file doesn't trigger an auto-sync.
     const patterns = parseIgnorePatterns(this.settings.ignorePatterns);
     if (rel && isIgnored(rel, patterns)) return false;
 
@@ -358,18 +358,18 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.debounceHandle = null;
   }
 
-  // ---------- Persistenz ----------
+  // ---------- Persistence ----------
 
   /**
-   * Lädt die Settings aus data.json. Gibt die ROHEN Daten zurück, damit onload()
-   * einen evtl. dort noch liegenden Alt-Sync-State (aus früheren Versionen) in
-   * die eigene sync-state.json migrieren kann.
+   * Loads the settings from data.json. Returns the RAW data so onload() can
+   * migrate any old sync state (from earlier versions) still sitting there
+   * into its own sync-state.json.
    */
   async loadSettings(): Promise<RawData | null> {
     const raw = (await this.loadData()) as RawData | null;
     this.settings = Object.assign({}, DEFAULT_SETTINGS, raw ?? {});
-    // Alt-Felder sind nicht mehr Teil der Settings -> aus dem Objekt entfernen,
-    // damit sie beim nächsten saveData nicht erneut nach data.json wandern.
+    // Legacy fields are no longer part of the settings -> remove them from the
+    // object so they don't land in data.json again on the next saveData.
     delete (this.settings as Partial<RawData>).syncState;
     delete (this.settings as Partial<RawData>).lastSyncMs;
     return raw;
@@ -380,7 +380,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   }
 }
 
-/** Rohform von data.json inkl. evtl. alter, migrierter Felder. */
+/** Raw form of data.json including any old, migrated fields. */
 interface RawData extends Partial<PluginSettings> {
   syncState?: Record<string, SyncStateEntry>;
   lastSyncMs?: number;

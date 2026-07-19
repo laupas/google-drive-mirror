@@ -51,27 +51,27 @@ function emptyScope(): ScopeSnapshot {
 }
 
 /**
- * Orchestriert einen vollständigen 2-Wege-Sync-Lauf:
- *   1. Lokalen Stand erheben (Hashes im Sync-Ordner) + Ordner.
- *   2. Drive-Stand abrufen (Dateien + Ordner).
- *   3. Reconciler befragen (Dateien und Ordner).
- *   4. Aktionen ausführen (Ordner anlegen → Dateien → Ordner löschen).
- *   5. Sync-Base aktualisieren und persistieren.
+ * Orchestrates a complete two-way sync run:
+ *   1. Collect the local state (hashes in the sync folder) + folders.
+ *   2. Fetch the Drive state (files + folders).
+ *   3. Query the reconciler (files and folders).
+ *   4. Execute actions (create folders → files → delete folders).
+ *   5. Update and persist the sync base.
  *
- * Der Löschschutz steckt im Reconciler (Löschung nur bei bezeugter beidseitiger
- * Existenz via local/remote-Flags) — deshalb keine separate Löschungs-Rückfrage.
+ * The deletion safety sits in the reconciler (deletion only on attested
+ * two-sided existence via local/remote flags) — hence no separate deletion prompt.
  *
- * Läufe sind serialisiert (kein paralleler Sync) über ein Running-Flag.
+ * Runs are serialized (no parallel sync) via a running flag.
  */
 export class SyncEngine {
   private running = false;
 
   /**
-   * Snapshot der scope-relevanten Settings-Felder für die Dauer EINES Laufs.
-   * `settings` ist ein von main.ts/OAuth/SettingsTab geteiltes, veränderliches
-   * Objekt — ein Ordnerwechsel mitten im Lauf würde sonst live durchschlagen
-   * (z.B. `localFolder`-Präfix ändert sich zwischen collectLocal und
-   * applyAction → Pfade passen nicht mehr zueinander). Wird in sync() gesetzt.
+   * Snapshot of the scope-relevant settings fields for the duration of ONE run.
+   * `settings` is a mutable object shared by main.ts/OAuth/SettingsTab —
+   * a folder change in the middle of a run would otherwise take effect live
+   * (e.g. the `localFolder` prefix changes between collectLocal and
+   * applyAction → paths no longer match). Set in sync().
    */
   private active: ScopeSnapshot = emptyScope();
 
@@ -88,8 +88,8 @@ export class SyncEngine {
   }
 
   /**
-   * Führt einen kompletten Sync durch. Gibt eine Zusammenfassung zurück.
-   * Bei parallelem Aufruf wird der zweite Aufruf übersprungen.
+   * Performs a complete sync. Returns a summary.
+   * On a parallel call the second call is skipped.
    */
   async sync(showNotice = true): Promise<SyncSummary | null> {
     if (this.running) {
@@ -101,7 +101,7 @@ export class SyncEngine {
     }
 
     this.running = true;
-    // Scope-Felder für die gesamte Laufzeit einfrieren (siehe `active`).
+    // Freeze the scope fields for the entire runtime (see `active`).
     this.active = {
       driveFolderId: this.settings.driveFolderId,
       driveSharedId: this.settings.driveSharedId,
@@ -121,7 +121,7 @@ export class SyncEngine {
     this.status.start(t("statusSyncStarted"), Date.now());
 
     try {
-      // Ordner-Cache pro Lauf leeren (IDs könnten sich extern geändert haben).
+      // Clear the folder cache per run (IDs may have changed externally).
       this.drive.clearFolderCache();
 
       this.status.update(t("engineReadingLocal"), 0);
@@ -134,35 +134,35 @@ export class SyncEngine {
         this.active.driveSharedId || undefined
       );
 
-      // Dateien nach vault-relativem Pfad indizieren.
+      // Index files by vault-relative path.
       //
-      // Drive erlaubt MEHRERE nicht-getrashte Dateien mit demselben Namen im
-      // selben Ordner (verschiedene IDs). Auf denselben vault-relativen Pfad
-      // abgebildet würden sie sich in einer Map gegenseitig überschreiben — der
-      // Reconciler sähe nur eine, und ein deleteRemote/Conflict träfe evtl. die
-      // falsche ID. Deshalb erst nach Pfad GRUPPIEREN, dann auflösen.
+      // Drive allows MULTIPLE non-trashed files with the same name in the
+      // same folder (different IDs). Mapped to the same vault-relative path
+      // they would overwrite each other in a map — the
+      // reconciler would see only one, and a deleteRemote/conflict might hit the
+      // wrong ID. Therefore first GROUP by path, then resolve.
       const remoteByPath = new Map<string, DriveFile[]>();
       for (const f of listing.files) {
-        // Google-Editors-Dateien (Docs/Sheets/Slides) haben keinen
-        // downloadbaren Binärinhalt -> immer überspringen.
+        // Google Editors files (Docs/Sheets/Slides) have no
+        // downloadable binary content -> always skip.
         if (isGoogleAppsFile(f.mimeType)) continue;
         const path = normalizePath(this.drive.pathOf(f));
-        // Systemordner (.obsidian/.trash/…) nie herunterladen.
+        // Never download system folders (.obsidian/.trash/…).
         if (isSystemPath(path)) continue;
-        // Optionaler Dateiendungs-Filter (gilt auch für Drive-Seite).
+        // Optional file-extension filter (also applies to the Drive side).
         if (!this.extensionAllowed(path)) continue;
-        // Ignore-Muster (Blacklist) — beidseitig, s. collectLocal().
+        // Ignore patterns (blacklist) — on both sides, see collectLocal().
         if (this.isIgnored(path)) continue;
         const list = remoteByPath.get(path);
         if (list) list.push(f);
         else remoteByPath.set(path, [f]);
       }
 
-      // Kollisionen auflösen: Sind ALLE Duplikate INHALTSGLEICH (gleicher,
-      // vorhandener md5), ist die Wahl egal — wir nehmen eine stabile (kleinste
-      // Drive-ID) und syncen normal. Weichen die Inhalte ab (oder fehlt ein
-      // md5, sodass Gleichheit nicht beweisbar ist), ist echte Mehrdeutigkeit:
-      // Pfad KOMPLETT überspringen (beide Seiten), statt eine Datei zu raten.
+      // Resolve collisions: If ALL duplicates have IDENTICAL CONTENT (same,
+      // present md5), the choice doesn't matter — we take a stable one (smallest
+      // Drive ID) and sync normally. If the contents differ (or an md5 is
+      // missing, so equality can't be proven), it's a real ambiguity:
+      // skip the path ENTIRELY (both sides) instead of guessing a file.
       const remote = new Map<string, DriveFile>();
       for (const [path, dups] of remoteByPath) {
         if (dups.length === 1) {
@@ -173,7 +173,7 @@ export class SyncEngine {
         const allSameContent =
           !!first && dups.every((d) => d.md5Checksum === first);
         if (allSameContent) {
-          // Inhaltsgleich -> deterministisch die kleinste ID wählen.
+          // Identical content -> deterministically choose the smallest ID.
           const chosen = dups.reduce((a, b) => (a.id <= b.id ? a : b));
           remote.set(path, chosen);
           this.status.append(
@@ -182,8 +182,8 @@ export class SyncEngine {
           );
           continue;
         }
-        // Echte Mehrdeutigkeit: Pfad auf beiden Seiten aus der Reconciliation
-        // nehmen, damit er nicht als „nur lokal → hochladen/löschen" gilt.
+        // Real ambiguity: remove the path from reconciliation on both sides,
+        // so it isn't treated as "only local → upload/delete".
         local.delete(path);
         const detail = t("engineDuplicateDifferent", { path });
         summary.errors.push(detail);
@@ -191,11 +191,11 @@ export class SyncEngine {
         log.warn("Pfad-Kollision in Drive:", detail);
       }
 
-      // Drive-Ordner nach Pfad indizieren (Systemordner ausgeschlossen).
-      // Gleiche Kollisionslogik wie bei Dateien: doppelte Ordnernamen (gleicher
-      // Pfad, verschiedene IDs) werden übersprungen, statt eine ID zu wählen —
-      // ein deleteRemoteFolder auf die falsche ID würde einen ganzen Teilbaum
-      // in den Papierkorb verschieben.
+      // Index Drive folders by path (system folders excluded).
+      // Same collision logic as for files: duplicate folder names (same
+      // path, different IDs) are skipped instead of choosing an ID —
+      // a deleteRemoteFolder on the wrong ID would move an entire subtree
+      // to the trash.
       const remoteFolders = new Map<string, string>();
       const collidingFolderPaths = new Set<string>();
       for (const folder of listing.folders) {
@@ -227,7 +227,7 @@ export class SyncEngine {
         })
       );
 
-      // Base in Datei- und Ordner-Einträge trennen.
+      // Split the base into file and folder entries.
       const base = new Map<string, SyncStateEntry>();
       const folderBase = new Map<string, SyncStateEntry>();
       for (const e of this.state.all()) {
@@ -248,15 +248,15 @@ export class SyncEngine {
         neverDeleteRemote: this.settings.neverDeleteRemote,
       });
 
-      // Nur „echte" Aktionen zählen (noop nicht als Fortschrittsschritt).
+      // Only count "real" actions (noop not as a progress step).
       const work = actions.filter((a) => a.type !== "noop");
       this.status.setTotal(work.length);
       if (work.length === 0) {
         this.status.append("info", t("engineNoChanges"));
       }
 
-      // 1) Ordner ANLEGEN (vor Dateien, damit Zielordner existieren).
-      //    Nach Pfadtiefe sortiert: Elternordner zuerst.
+      // 1) CREATE folders (before files, so target folders exist).
+      //    Sorted by path depth: parent folders first.
       const folderCreates = folderActions
         .filter(
           (a) =>
@@ -334,12 +334,12 @@ export class SyncEngine {
         )
         .sort((a, b) => depth(b.path) - depth(a.path));
       for (const fa of folderDeletes) {
-        // SICHERHEITSNETZ gegen Teilbaum-Verlust: `trashFolder` schiebt einen
-        // Drive-Ordner SAMT INHALT in den Papierkorb. Ein deleteRemoteFolder
-        // darf daher nur laufen, wenn im aktuellen Listing keine Drive-Datei
-        // mehr unter diesem Ordner liegt. Meldet die lokale Ordner-Erhebung
-        // fälschlich „Ordner fehlt lokal" (z.B. transienter Cache-Aussetzer),
-        // würde sonst ein befüllter Remote-Teilbaum gelöscht.
+        // SAFETY NET against subtree loss: `trashFolder` moves a
+        // Drive folder INCLUDING ITS CONTENT to the trash. A deleteRemoteFolder
+        // may therefore only run if no Drive file remains under this folder
+        // in the current listing. If the local folder collection
+        // wrongly reports "folder missing locally" (e.g. a transient cache glitch),
+        // a populated remote subtree would otherwise be deleted.
         if (
           fa.type === "deleteRemoteFolder" &&
           this.remoteSubtreeHasFiles(fa.path, remote)
@@ -364,27 +364,27 @@ export class SyncEngine {
         }
       }
 
-      // 4) noopFolder-Einträge im State auffrischen. Meist "beide Seiten
-      //    vorhanden" (local=remote=true). Ein bewusst nur-remote gehaltener
-      //    Ordner (keptRemoteOnly, lokal nicht vorhanden) muss aber ERHALTEN
-      //    bleiben, sonst würde er als beidseitig markiert und der Ordner käme
-      //    beim nächsten Lauf lokal zurück (Zombie).
+      // 4) Refresh noopFolder entries in the state. Usually "both sides
+      //    present" (local=remote=true). But a deliberately remote-only kept
+      //    folder (keptRemoteOnly, not present locally) must be PRESERVED,
+      //    otherwise it would be marked as two-sided and the folder would come
+      //    back locally on the next run (zombie).
       for (const fa of folderActions) {
         if (fa.type !== "noopFolder") continue;
         const prev = this.state.get(fa.path);
         if (prev?.keptRemoteOnly && !localFolders.has(fa.path)) {
-          // nur-remote-Ordner unverändert lassen
+          // leave remote-only folder unchanged
           continue;
         }
         this.state.set(this.folderEntry(fa.path, remoteFolders.get(fa.path)));
       }
 
       this.state.setLastSyncMs(Date.now());
-      // Sync-State in eigene Datei persistieren (nicht data.json).
+      // Persist the sync state in its own file (not data.json).
       await this.state.save();
 
-      // Flag VOR finish() zurücksetzen: finish() feuert das Status-Abo, das den
-      // Sync-Button anhand isRunning() aktualisiert — sonst bliebe er deaktiviert.
+      // Reset the flag BEFORE finish(): finish() fires the status subscription that
+      // updates the sync button based on isRunning() — otherwise it would stay disabled.
       this.running = false;
 
       const finalMsg = summaryText(summary);
@@ -394,7 +394,7 @@ export class SyncEngine {
       );
 
       if (showNotice) {
-        // Bei Fehlern die Notice länger anzeigen, damit Details lesbar sind.
+        // On errors, show the notice longer so the details are readable.
         const duration = summary.errors.length ? 15000 : undefined;
         new Notice(formatSummary(summary), duration);
       }
@@ -407,17 +407,17 @@ export class SyncEngine {
       if (showNotice) new Notice(t("engineNoticePrefix", { message: msg }));
       return summary;
     } finally {
-      // Sicherheitsnetz, falls oben ein Pfad das Flag nicht zurückgesetzt hat.
+      // Safety net in case a path above did not reset the flag.
       this.running = false;
     }
   }
 
   /**
-   * Zwischenspeichert den Sync-State während eines laufenden Syncs. Setzt
-   * bewusst NICHT `lastSyncMs` — der Lauf gilt erst am Ende als abgeschlossen.
-   * Ein Checkpoint enthält nur Einträge abgeschlossener Übertragungen und ist
-   * damit jederzeit ein konsistenter Teilzustand. Fehler beim Schreiben brechen
-   * den Sync nicht ab (nur Logeintrag).
+   * Checkpoints the sync state during a running sync. Deliberately does
+   * NOT set `lastSyncMs` — the run only counts as finished at the end.
+   * A checkpoint contains only entries of completed transfers and is
+   * therefore always a consistent partial state. Write errors do not abort
+   * the sync (log entry only).
    */
   private async checkpoint(): Promise<void> {
     try {
@@ -427,7 +427,7 @@ export class SyncEngine {
     }
   }
 
-  /** Führt eine einzelne Reconcile-Aktion aus und aktualisiert die Base. */
+  /** Executes a single reconcile action and updates the base. */
   private async applyAction(
     action: SyncAction,
     local: Map<string, LocalFile>,
@@ -436,17 +436,17 @@ export class SyncEngine {
   ): Promise<void> {
     switch (action.type) {
       case "noop": {
-        // Base aktualisieren, damit künftige Läufe konsistent sind.
+        // Update the base so future runs are consistent.
         const l = local.get(action.path);
         const r = remote.get(action.path);
         const prev = this.state.get(action.path);
         if (l && r) {
           this.state.set(this.entryFrom(action.path, r, l));
         } else if (!l && r && prev?.keptRemoteOnly) {
-          // "Bewusst nur-remote" (keptRemoteOnly): Eintrag ERHALTEN, damit die
-          // Datei nicht beim nächsten Lauf als Neuzugang heruntergeladen wird.
-          // remoteMtime/md5 auffrischen, damit ein späterer Drive-Edit als
-          // Änderung erkannt wird (-> dann Download).
+          // "Deliberately remote-only" (keptRemoteOnly): PRESERVE the entry, so the
+          // file is not downloaded as a new addition on the next run.
+          // Refresh remoteMtime/md5 so a later Drive edit is recognized as
+          // a change (-> then download).
           this.state.set({
             path: action.path,
             local: false,
@@ -508,11 +508,11 @@ export class SyncEngine {
       }
 
       case "keepRemoteDropLocal": {
-        // Setting "Do not delete in Google Drive": Drive-Datei NICHT anfassen,
-        // nur den Base-Eintrag auf nur-remote setzen. Damit gilt die Datei beim
-        // nächsten Lauf nicht mehr als "lokal gelöscht" (kein deleteRemote) und
-        // auch nicht als "neu in Drive" (kein Download-Zombie). Über den
-        // "Nur in Drive"-Baum kann local wieder aktiviert werden (-> Download).
+        // Setting "Do not delete in Google Drive": do NOT touch the Drive file,
+        // only set the base entry to remote-only. This way, on the next run the
+        // file no longer counts as "deleted locally" (no deleteRemote) and
+        // also not as "new in Drive" (no download zombie). Via the
+        // "Drive only" tree local can be re-enabled (-> download).
         const prev = this.state.get(action.path);
         this.state.set({
           path: action.path,
@@ -555,9 +555,17 @@ export class SyncEngine {
     }
   }
 
-  // ---------- Lokale Datei-Helfer ----------
+  // ---------- Local file helpers ----------
 
-  /** Erhebt Hash/Größe/mtime aller Dateien im konfigurierten Sync-Ordner. */
+  /**
+   * Collects hash/size/mtime of all files in the configured sync folder.
+   *
+   * PERFORMANCE (large vaults): Instead of fully reading and hashing every file
+   * on EVERY run, the stored MD5 from the base is reused
+   * if `mtime` AND `size` are unchanged (rsync/Syncthing principle). Only on
+   * a mismatch (or a missing base) is the content read and re-hashed.
+   * This way the second and every further sync is almost without hashing.
+   */
   private async collectLocal(): Promise<Map<string, LocalFile>> {
     const result = new Map<string, LocalFile>();
     const prefix = this.folderPrefix();
@@ -610,7 +618,7 @@ export class SyncEngine {
       }
     }
 
-    // 2) Zusätzlich leere Ordner aus dem geladenen Vault-Baum aufnehmen.
+    // 2) Additionally include empty folders from the loaded vault tree.
     for (const f of this.vault.getAllLoadedFiles()) {
       if (!(f instanceof TFolder)) continue;
       if (f.isRoot()) continue;
@@ -622,9 +630,9 @@ export class SyncEngine {
   }
 
   /**
-   * Liegt im aktuellen Drive-Listing noch (mindestens) eine Datei unterhalb des
-   * Ordners `folderPath`? Dient als Schutz gegen das Trashen eines befüllten
-   * Remote-Teilbaums (siehe deleteRemoteFolder-Sicherheitsnetz).
+   * Is there still (at least) one file below the folder `folderPath` in the
+   * current Drive listing? Serves as protection against trashing a populated
+   * remote subtree (see the deleteRemoteFolder safety net).
    */
   private remoteSubtreeHasFiles(
     folderPath: string,
@@ -637,7 +645,7 @@ export class SyncEngine {
     return false;
   }
 
-  /** Führt eine einzelne Ordner-Aktion aus und pflegt den State. */
+  /** Executes a single folder action and maintains the state. */
   private async applyFolderAction(
     action: FolderAction,
     remoteFolders: Map<string, string>,
@@ -685,7 +693,7 @@ export class SyncEngine {
         const abs = this.toAbsolute(action.path);
         const folder = this.vault.getAbstractFileByPath(abs);
         if (folder) {
-          // false = Obsidian-.trash im Vault (nicht endgültig).
+          // false = Obsidian .trash in the vault (not permanent).
           await this.vault.trash(folder, false);
         } else if (await this.vault.adapter.exists(abs)) {
           await this.vault.adapter.trashLocal(abs);
@@ -698,8 +706,8 @@ export class SyncEngine {
         return;
       }
       case "keepRemoteFolder": {
-        // "Do not delete in Google Drive": Drive-Ordner NICHT anfassen, nur den
-        // Base-Eintrag auf nur-remote (keptRemoteOnly) setzen.
+        // "Do not delete in Google Drive": do NOT touch the Drive folder, only
+        // set the base entry to remote-only (keptRemoteOnly).
         this.state.set({
           path: action.path,
           local: false,
@@ -723,7 +731,7 @@ export class SyncEngine {
     }
   }
 
-  /** Baut einen Ordner-State-Eintrag (local & remote true, isFolder true). */
+  /** Builds a folder state entry (local & remote true, isFolder true). */
   private folderEntry(path: string, driveId?: string): SyncStateEntry {
     return {
       path,
@@ -762,15 +770,15 @@ export class SyncEngine {
   }
 
   /**
-   * Verschiebt eine lokale Datei in Obsidians `.trash`-Ordner im Vault
-   * (nicht in den System-Papierkorb). `vault.trash(file, false)` = Vault-.trash.
-   * Fallback `trashLocal` des Adapters landet ebenfalls im Vault-.trash.
+   * Moves a local file into Obsidian's `.trash` folder in the vault
+   * (not into the system trash). `vault.trash(file, false)` = vault .trash.
+   * The adapter's `trashLocal` fallback also lands in the vault .trash.
    */
   private async trashLocal(relPath: string): Promise<void> {
     const abs = this.toAbsolute(relPath);
     const file = this.vault.getAbstractFileByPath(abs);
     if (file instanceof TFile) {
-      // false = Obsidian-.trash im Vault (nicht endgültig gelöscht).
+      // false = Obsidian .trash in the vault (not permanently deleted).
       await this.vault.trash(file, false);
     } else if (await this.vault.adapter.exists(abs)) {
       await this.vault.adapter.trashLocal(abs);
@@ -806,16 +814,16 @@ export class SyncEngine {
   }
 
   /**
-   * Ist der (sync-relative) Pfad durch ein Ignore-Muster ausgeschlossen? Wird
-   * auf BEIDEN Seiten angewandt (lokal + Drive, Dateien + Ordner), damit eine
-   * ignorierte Datei nicht als „einseitig gelöscht" gilt. Muster sind in
-   * `active.ignorePatterns` bereits vorgeparst.
+   * Is the (sync-relative) path excluded by an ignore pattern? Applied
+   * on BOTH sides (local + Drive, files + folders), so an
+   * ignored file is not treated as "deleted on one side". Patterns are already
+   * pre-parsed in `active.ignorePatterns`.
    */
   private isIgnored(path: string): boolean {
     return isIgnored(path, this.active.ignorePatterns);
   }
 
-  /** Ordnerpräfix inkl. abschließendem "/" ("" wenn ganzer Vault). */
+  /** Folder prefix incl. trailing "/" ("" if whole vault). */
   private folderPrefix(): string {
     const f = this.active.localFolder.trim();
     if (!f) return "";
@@ -823,30 +831,30 @@ export class SyncEngine {
     return norm.endsWith("/") ? norm : norm + "/";
   }
 
-  /** Liegt der Vault-Pfad im konfigurierten Sync-Ordner (und nicht in einem Systemordner)? */
+  /** Is the vault path in the configured sync folder (and not in a system folder)? */
   private inScope(vaultPath: string): boolean {
     if (isSystemPath(vaultPath)) return false;
     const prefix = this.folderPrefix();
-    if (!prefix) return true; // ganzer Vault
+    if (!prefix) return true; // whole vault
     return vaultPath === prefix.slice(0, -1) || vaultPath.startsWith(prefix);
   }
 
-  /** Vault-Pfad -> Sync-relativer Pfad (ohne Ordnerpräfix). */
+  /** Vault path -> sync-relative path (without folder prefix). */
   private toRelative(vaultPath: string, prefix: string): string {
     return prefix && vaultPath.startsWith(prefix)
       ? vaultPath.slice(prefix.length)
       : vaultPath;
   }
 
-  /** Sync-relativer Pfad -> vollständiger Vault-Pfad. */
+  /** Sync-relative path -> full vault path. */
   private toAbsolute(relPath: string): string {
     return normalizePath(this.folderPrefix() + relPath);
   }
 
   /**
-   * Baut einen State-Eintrag für eine Datei, die soeben auf BEIDEN Seiten
-   * präsent ist (nach Upload oder Download). Daher local=remote=true — das ist
-   * die Voraussetzung, damit eine spätere Löschung überhaupt propagiert wird.
+   * Builds a state entry for a file that is currently present on BOTH sides
+   * (after upload or download). Hence local=remote=true — that is
+   * the precondition for a later deletion to be propagated at all.
    */
   private entryFrom(
     path: string,
@@ -907,7 +915,7 @@ function describeAction(a: SyncAction): string {
   }
 }
 
-/** Kompakte Ergebniszeile für den finalen Status (ohne Notice-Formatierung). */
+/** Compact result line for the final status (without notice formatting). */
 function summaryText(s: SyncSummary): string {
   const parts: string[] = [];
   if (s.uploaded) parts.push(t("summaryUploaded", { count: s.uploaded }));
@@ -924,18 +932,18 @@ function summaryText(s: SyncSummary): string {
 }
 
 /**
- * Google-Editors-Dateien (Docs, Sheets, Slides, Forms …) und Ordner haben
- * einen "application/vnd.google-apps.*"-MIME-Typ und keinen downloadbaren
- * Binärinhalt. Solche Dateien können nicht 1:1 gesynct werden.
+ * Google Editors files (Docs, Sheets, Slides, Forms …) and folders have
+ * an "application/vnd.google-apps.*" MIME type and no downloadable
+ * binary content. Such files cannot be synced 1:1.
  */
 function isGoogleAppsFile(mimeType: string): boolean {
   return mimeType.startsWith("application/vnd.google-apps");
 }
 
 /**
- * Pfade in Systemordnern, die niemals gesynct werden dürfen — v.a. der
- * Obsidian-Konfigurationsordner (Plugins, Themes, Settings, unser eigener
- * Sync-State). Greift besonders beim Sync des gesamten Vaults.
+ * Paths in system folders that must never be synced — above all the
+ * Obsidian config folder (plugins, themes, settings, our own
+ * sync state). Especially relevant when syncing the whole vault.
  */
 function isSystemPath(vaultPath: string): boolean {
   const p = vaultPath.startsWith("/") ? vaultPath.slice(1) : vaultPath;
@@ -964,7 +972,7 @@ function formatSummary(s: SyncSummary): string {
   const head = parts.length ? parts.join("  ") : t("summaryNoChanges");
   let errTail = "";
   if (s.errors.length) {
-    // Erste bis zu 3 Fehlermeldungen direkt anzeigen; Rest zählen.
+    // Show the first up to 3 error messages directly; count the rest.
     const shown = s.errors.slice(0, 3).map((e) => `• ${e}`).join("\n");
     const more =
       s.errors.length > 3

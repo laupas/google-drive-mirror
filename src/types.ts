@@ -1,164 +1,164 @@
 /**
- * Zentrale Typdefinitionen für das Google-Drive-Sync-Plugin.
+ * Central type definitions for the Google Drive sync plugin.
  */
 
-/** Persistente Plugin-Einstellungen (in data.json gespeichert). */
+/** Persistent plugin settings (stored in data.json). */
 export interface PluginSettings {
-  /** OAuth Client-ID der eigenen Google-Cloud-App. */
+  /** OAuth client ID of the user's own Google Cloud app. */
   clientId: string;
-  /** OAuth Client-Secret der eigenen Google-Cloud-App. */
+  /** OAuth client secret of the user's own Google Cloud app. */
   clientSecret: string;
-  /** Langlebiger Refresh-Token, aus dem Access-Tokens abgeleitet werden. */
+  /** Long-lived refresh token from which access tokens are derived. */
   refreshToken: string;
 
-  /** Google-Drive-Ordner-ID, die als Sync-Wurzel dient. */
+  /** Google Drive folder ID that serves as the sync root. */
   driveFolderId: string;
-  /** Anzeigename des Drive-Ordners (nur für UI). */
+  /** Display name of the Drive folder (UI only). */
   driveFolderName: string;
   /**
-   * ID des Shared Drive, falls der Wurzelordner in einem solchen liegt.
-   * Leer = normales "My Drive". Steuert die Shared-Drive-Parameter der List-API.
+   * ID of the Shared Drive, if the root folder lives in one.
+   * Empty = regular "My Drive". Controls the Shared Drive parameters of the list API.
    */
   driveSharedId: string;
 
-  /** Vault-relativer Unterordner, der gesynct wird ("" = ganzer Vault). */
+  /** Vault-relative subfolder that is synced ("" = whole vault). */
   localFolder: string;
 
   /**
-   * Kommagetrennte Liste erlaubter Dateiendungen (ohne Punkt), z.B.
-   * "md, png, jpg, pdf". Leer = alle Endungen erlaubt.
-   * Google-Editors-Dateien (Docs/Sheets/…) werden unabhängig davon immer
-   * ignoriert, da sie keinen downloadbaren Binärinhalt haben.
+   * Comma-separated list of allowed file extensions (without dot), e.g.
+   * "md, png, jpg, pdf". Empty = all extensions allowed.
+   * Google Editors files (Docs/Sheets/…) are always ignored regardless,
+   * since they have no downloadable binary content.
    */
   allowedExtensions: string;
 
   /**
-   * Kommagetrennte Liste von Ignore-Mustern (Blacklist), komplementär zu
-   * `allowedExtensions`. Erlaubt reine Endungen (`tmp`, `.tmp`) sowie
-   * Glob-Muster (`*.log`, `temp/*`, `**​/drafts/**`). Leer = nichts ignorieren.
-   * Greift auf BEIDER Seiten (lokal + Drive), damit eine ignorierte Datei nicht
-   * als „einseitig gelöscht" fehlgedeutet wird. Siehe `src/ignore.ts`.
+   * Comma-separated list of ignore patterns (blacklist), complementary to
+   * `allowedExtensions`. Allows plain extensions (`tmp`, `.tmp`) as well as
+   * glob patterns (`*.log`, `temp/*`, `**​/drafts/**`). Empty = ignore nothing.
+   * Applies on BOTH sides (local + Drive), so an ignored file is not
+   * misinterpreted as "deleted on one side". See `src/ignore.ts`.
    */
   ignorePatterns: string;
 
-  /** Automatischer Sync aktiv? */
+  /** Automatic sync active? */
   autoSyncEnabled: boolean;
-  /** Poll-Intervall für Drive-Änderungen in Sekunden. */
+  /** Poll interval for Drive changes in seconds. */
   pollIntervalSeconds: number;
-  /** Verzögerung nach lokaler Änderung vor Upload (Debounce) in ms. */
+  /** Delay after a local change before upload (debounce) in ms. */
   localDebounceMs: number;
 
   /**
-   * Aufbewahrungsdauer für Log-Einträge in Stunden. Ältere Einträge werden
-   * automatisch entfernt. 0 = nie automatisch löschen.
+   * Retention duration for log entries in hours. Older entries are
+   * removed automatically. 0 = never delete automatically.
    */
   logRetentionHours: number;
 
   /**
-   * Ausführliches Debug-Logging in der Developer-Console. Standardmäßig aus,
-   * damit die Konsole nur Fehler zeigt (Obsidian-Richtlinie).
+   * Verbose debug logging in the developer console. Off by default,
+   * so the console only shows errors (Obsidian guideline).
    */
   debugLogging: boolean;
 
   /**
-   * "Do not delete in Google Drive". Wenn true, wird eine LOKALE Löschung nicht
-   * nach Drive propagiert — die Drive-Datei bleibt erhalten und der Base-Eintrag
-   * wird auf `local=false, remote=true` gesetzt (die Datei kommt lokal nicht als
-   * Zombie zurück). Über den "Nur in Drive"-Baum in den Settings kann das
-   * `local=false`-Flag entfernt werden, damit die Datei wieder heruntergeladen
-   * wird. Standard: false.
+   * "Do not delete in Google Drive". When true, a LOCAL deletion is not
+   * propagated to Drive — the Drive file is kept and the base entry
+   * is set to `local=false, remote=true` (the file does not return locally as a
+   * zombie). Via the "Drive only" tree in the settings the
+   * `local=false` flag can be removed so the file is downloaded again.
+   * Default: false.
    */
   neverDeleteRemote: boolean;
 }
 
 /**
- * Zustand einer Datei (oder eines Ordners) beim letzten erfolgreichen Sync —
- * das "Gedächtnis" zwischen zwei Läufen.
+ * State of a file (or folder) at the last successful sync —
+ * the "memory" between two runs.
  *
- * Kern des Löschschutzes: `local`/`remote` merken sich, auf welcher Seite die
- * Datei beim letzten Verarbeiten TATSÄCHLICH existierte. Eine Löschung wird nur
- * dann propagiert, wenn die Datei zuvor auf BEIDEN Seiten war (local && remote)
- * und jetzt auf einer fehlt — dann ist es eine echte Löschung, kein Neuzugang.
+ * Core of the deletion safety: `local`/`remote` remember on which side the
+ * file ACTUALLY existed at the last processing. A deletion is only
+ * propagated if the file was previously on BOTH sides (local && remote)
+ * and is now missing on one — then it is a real deletion, not a new addition.
  */
 export interface SyncStateEntry {
-  /** Vault-relativer Pfad (Key, Klartext — dient zugleich als ID). */
+  /** Vault-relative path (key, plain text — also serves as ID). */
   path: string;
-  /** Existierte die Datei beim letzten Verarbeiten lokal? */
+  /** Did the file exist locally at the last processing? */
   local: boolean;
-  /** Existierte die Datei beim letzten Verarbeiten in Drive? */
+  /** Did the file exist in Drive at the last processing? */
   remote: boolean;
-  /** true, wenn dieser Eintrag einen Ordner beschreibt (kein Hash/mtime). */
+  /** true if this entry describes a folder (no hash/mtime). */
   isFolder: boolean;
-  /** Google-Drive-Datei-ID (leer bei reinem Ordner-Platzhalter ohne Drive-Pendant). */
+  /** Google Drive file ID (empty for a pure folder placeholder without a Drive counterpart). */
   driveId: string;
-  /** MD5-Hash des Inhalts beim letzten Sync (leer bei Ordnern). */
+  /** MD5 hash of the content at the last sync (empty for folders). */
   md5: string;
-  /** Größe in Bytes beim letzten Sync. */
+  /** Size in bytes at the last sync. */
   size: number;
-  /** Lokale mtime beim letzten Sync (ms). */
+  /** Local mtime at the last sync (ms). */
   localMtime: number;
-  /** Drive modifiedTime beim letzten Sync (ms). */
+  /** Drive modifiedTime at the last sync (ms). */
   remoteMtime: number;
   /**
-   * true, wenn die Datei BEWUSST nur in Drive gehalten wird: lokal gelöscht,
-   * aber wegen "Do not delete in Google Drive" nicht aus Drive entfernt und
-   * absichtlich NICHT lokal wiederhergestellt. Unterscheidet diesen Fall von
-   * einer fremden/kopierten Base (local=false), die sehr wohl heruntergeladen
-   * werden soll. Wird über den "Nur in Drive"-Baum in den Settings zurückgesetzt.
+   * true if the file is DELIBERATELY kept in Drive only: deleted locally,
+   * but not removed from Drive because of "Do not delete in Google Drive" and
+   * intentionally NOT restored locally. Distinguishes this case from
+   * a foreign/copied base (local=false), which very much should be
+   * downloaded. Reset via the "Drive only" tree in the settings.
    */
   keptRemoteOnly?: boolean;
 }
 
-/** Ein Google-Drive-Ordner mit vault-relativem Pfad (vom rekursiven listFiles). */
+/** A Google Drive folder with a vault-relative path (from the recursive listFiles). */
 export interface DriveFolder {
   id: string;
   relativePath: string;
 }
 
-/** Ein Google-Drive-Datei-Eintrag (Teilmenge der API-Felder). */
+/** A Google Drive file entry (subset of the API fields). */
 export interface DriveFile {
   id: string;
   name: string;
   mimeType: string;
-  /** ms seit Epoch. */
+  /** ms since epoch. */
   modifiedTimeMs: number;
   md5Checksum?: string;
   size?: number;
   trashed: boolean;
   parents?: string[];
   /**
-   * Pfad relativ zum Sync-Wurzelordner, aus der Ordnerkette abgeleitet
-   * (z.B. "sub/notiz.md"). Vom rekursiven listFiles() gesetzt.
+   * Path relative to the sync root folder, derived from the folder chain
+   * (e.g. "sub/note.md"). Set by the recursive listFiles().
    */
   relativePath?: string;
 }
 
-/** Ergebnis-Kategorien des Reconcilers für eine einzelne Datei. */
+/** Result categories of the reconciler for a single file. */
 export type SyncAction =
-  | { type: "upload"; path: string } // lokal -> Drive (neu oder geändert)
-  | { type: "download"; path: string; driveId: string } // Drive -> lokal
-  | { type: "deleteLocal"; path: string } // Drive gelöscht -> lokal löschen
-  | { type: "deleteRemote"; path: string; driveId: string } // lokal gelöscht -> Drive löschen
-  // Lokale Löschung NICHT nach Drive propagieren (Setting "Do not delete in
-  // Google Drive"). Keine Drive-Operation; die Engine setzt den Base-Eintrag auf
-  // local=false, remote=true, damit die Datei in Drive bleibt und lokal nicht
-  // als Zombie zurückkehrt.
+  | { type: "upload"; path: string } // local -> Drive (new or changed)
+  | { type: "download"; path: string; driveId: string } // Drive -> local
+  | { type: "deleteLocal"; path: string } // deleted in Drive -> delete locally
+  | { type: "deleteRemote"; path: string; driveId: string } // deleted locally -> delete in Drive
+  // Do NOT propagate a local deletion to Drive (setting "Do not delete in
+  // Google Drive"). No Drive operation; the engine sets the base entry to
+  // local=false, remote=true, so the file stays in Drive and does not return
+  // locally as a zombie.
   | { type: "keepRemoteDropLocal"; path: string; driveId: string }
-  | { type: "conflict"; path: string; driveId: string; winner: "local" | "remote" } // beide geändert
+  | { type: "conflict"; path: string; driveId: string; winner: "local" | "remote" } // both changed
   | { type: "noop"; path: string };
 
-/** Aktionen für Ordner (leere Ordner synchronisieren/löschen). */
+/** Actions for folders (sync/delete empty folders). */
 export type FolderAction =
-  | { type: "createLocalFolder"; path: string } // Ordner lokal anlegen
-  | { type: "createRemoteFolder"; path: string } // Ordner in Drive anlegen
-  | { type: "deleteLocalFolder"; path: string } // Ordner lokal löschen
-  | { type: "deleteRemoteFolder"; path: string; driveId: string } // Ordner in Drive löschen
-  // Lokal gelöschter Ordner, aber "Do not delete in Google Drive" aktiv:
-  // Ordner in Drive behalten, Base auf nur-remote (keptRemoteOnly) setzen.
+  | { type: "createLocalFolder"; path: string } // create folder locally
+  | { type: "createRemoteFolder"; path: string } // create folder in Drive
+  | { type: "deleteLocalFolder"; path: string } // delete folder locally
+  | { type: "deleteRemoteFolder"; path: string; driveId: string } // delete folder in Drive
+  // Locally deleted folder, but "Do not delete in Google Drive" active:
+  // keep folder in Drive, set base to remote-only (keptRemoteOnly).
   | { type: "keepRemoteFolder"; path: string; driveId: string }
   | { type: "noopFolder"; path: string };
 
-/** Zusammengefasstes Ergebnis eines Sync-Laufs (für Notices/Logs). */
+/** Aggregated result of a sync run (for notices/logs). */
 export interface SyncSummary {
   uploaded: number;
   downloaded: number;
@@ -186,5 +186,5 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   neverDeleteRemote: false,
 };
 
-/** OAuth-Scope: voller Drive-Zugriff, damit auch manuell in Drive angelegte Dateien sichtbar sind. */
+/** OAuth scope: full Drive access, so that files created manually in Drive are also visible. */
 export const OAUTH_SCOPE = "https://www.googleapis.com/auth/drive";

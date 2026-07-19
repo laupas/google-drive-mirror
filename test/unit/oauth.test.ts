@@ -1,10 +1,10 @@
 /**
- * Unit-Tests für OAuthManager — Fokus auf die testbare Logik ohne echten
- * Browser/HTTP-Server: isConfigured(), Token-Cache & Refresh, reset().
- * Der interaktive Loopback-Flow (awaitAuthCode) wird hier nicht getestet
- * (Integrations-/manueller Test), da er einen echten HTTP-Server bindet.
+ * Unit tests for OAuthManager — focused on the testable logic without a real
+ * browser/HTTP server: isConfigured(), token cache & refresh, reset().
+ * The interactive loopback flow (awaitAuthCode) is not tested here
+ * (integration/manual test), since it binds a real HTTP server.
  *
- * Format: AAA. `requestUrl` aus dem obsidian-Mock wird via vi.mocked gesteuert.
+ * Format: AAA. `requestUrl` from the obsidian mock is controlled via vi.mocked.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -18,7 +18,7 @@ function settings(overrides: Partial<PluginSettings> = {}): PluginSettings {
   return { ...DEFAULT_SETTINGS, ...overrides };
 }
 
-/** Nachbildung einer erfolgreichen Token-Antwort von requestUrl. */
+/** Replica of a successful token response from requestUrl. */
 function tokenResponse(json: Record<string, unknown>) {
   return { status: 200, json, text: JSON.stringify(json) } as unknown;
 }
@@ -98,7 +98,7 @@ describe("OAuthManager.getAccessToken", () => {
     mockedRequestUrl.mockResolvedValue(
       tokenResponse({ access_token: "AT-1", expires_in: 3600 })
     );
-    await mgr.getAccessToken(); // füllt Cache
+    await mgr.getAccessToken(); // fills cache
 
     // Act
     const token = await mgr.getAccessToken();
@@ -109,22 +109,22 @@ describe("OAuthManager.getAccessToken", () => {
   });
 
   it("erneuert den Token, wenn der Cache abgelaufen ist", async () => {
-    // Arrange: fixe Uhr, kurze Lebensdauer.
+    // Arrange: fixed clock, short lifetime.
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     const mgr = new OAuthManager(
       settings({ clientId: "c", clientSecret: "s", refreshToken: "r" })
     );
-    // expires_in 60s -> nach 60s-Marge sofort abgelaufen; wir setzen 120s.
+    // expires_in 60s -> expires immediately after the 60s margin; we set 120s.
     mockedRequestUrl.mockResolvedValueOnce(
       tokenResponse({ access_token: "AT-1", expires_in: 120 })
     );
     mockedRequestUrl.mockResolvedValueOnce(
       tokenResponse({ access_token: "AT-2", expires_in: 120 })
     );
-    await mgr.getAccessToken(); // AT-1, gültig bis +60s
+    await mgr.getAccessToken(); // AT-1, valid until +60s
 
-    // Act: Zeit über die (120-60)=60s Marge hinaus vorspulen.
+    // Act: advance time past the (120-60)=60s margin.
     vi.advanceTimersByTime(61_000);
     const token = await mgr.getAccessToken();
 
@@ -158,12 +158,12 @@ describe("OAuthManager.reset", () => {
     mockedRequestUrl.mockResolvedValue(
       tokenResponse({ access_token: "AT-1", expires_in: 3600 })
     );
-    await mgr.getAccessToken(); // Cache füllen
+    await mgr.getAccessToken(); // fill cache
 
     // Act
     mgr.reset();
 
-    // Assert: Settings geleert und nicht mehr konfiguriert.
+    // Assert: settings cleared and no longer configured.
     expect(s.refreshToken).toBe("");
     expect(mgr.isConfigured()).toBe(false);
     await expect(mgr.getAccessToken()).rejects.toThrow(/not signed in/i);

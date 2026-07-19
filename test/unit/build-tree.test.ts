@@ -1,6 +1,6 @@
 /**
- * Unit-Tests für buildTree() — baut aus flachen Sync-State-Einträgen die
- * Baumstruktur für den Sync-Baum in den Settings.
+ * Unit tests for buildTree() — builds the tree structure for the sync tree
+ * in the settings from flat sync-state entries.
  */
 
 import { describe, it, expect } from "vitest";
@@ -28,13 +28,13 @@ describe("buildTree", () => {
   });
 
   it("erzeugt Zwischenordner ohne eigenen State-Eintrag als Struktur-Ordner", () => {
-    // Arrange: nur die Datei, kein Ordner-Eintrag für "a/b".
+    // Arrange: only the file, no folder entry for "a/b".
     const entries = [baseEntry({ path: "a/b/deep.md", isFolder: false })];
 
     // Act
     const root = buildTree(entries);
 
-    // Assert: a -> b -> deep.md, a und b sind Ordner (isFolder default true).
+    // Assert: a -> b -> deep.md, a and b are folders (isFolder default true).
     const a = root.children.find((c) => c.name === "a")!;
     expect(a.isFolder).toBe(true);
     const b = a.children.find((c) => c.name === "b")!;

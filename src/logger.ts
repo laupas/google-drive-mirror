@@ -1,34 +1,34 @@
 /**
- * Zentraler Logger für das gesamte Plugin. Einheitlicher Prefix, ein Schalter.
+ * Central logger for the whole plugin. Uniform prefix, one switch.
  *
- * `info`/`debug` werden nur ausgegeben, wenn Debug-Logging in den Settings
- * aktiv ist — so bleibt die Konsole in der Standardkonfiguration frei von
- * Nicht-Fehler-Meldungen (Obsidian-Richtlinie: nur Fehler by default).
- * `warn`/`error` laufen immer.
+ * `info`/`debug` are only output when debug logging is active in the settings
+ * — so the console stays free of non-error messages in the default
+ * configuration (Obsidian guideline: only errors by default).
+ * `warn`/`error` always run.
  */
 const PREFIX = "[GDrive Sync]";
 
 let debugEnabled = false;
 
-/** Schaltet Info-/Debug-Logging global um (aus den Settings gesetzt). */
+/** Toggles info/debug logging globally (set from the settings). */
 export function setDebugLogging(enabled: boolean): void {
   debugEnabled = enabled;
 }
 
 export const log = {
-  /** Informative Meldung — nur bei aktivem Debug-Logging. */
+  /** Informational message — only when debug logging is active. */
   info(...args: unknown[]): void {
     if (debugEnabled) console.log(PREFIX, ...args);
   },
-  /** Detaillierte Debug-Meldung — nur bei aktivem Debug-Logging. */
+  /** Detailed debug message — only when debug logging is active. */
   debug(...args: unknown[]): void {
     if (debugEnabled) console.debug(PREFIX, ...args);
   },
-  /** Warnung — immer sichtbar. */
+  /** Warning — always visible. */
   warn(...args: unknown[]): void {
     console.warn(PREFIX, ...args);
   },
-  /** Fehler — immer sichtbar. */
+  /** Error — always visible. */
   error(...args: unknown[]): void {
     console.error(PREFIX, ...args);
   },

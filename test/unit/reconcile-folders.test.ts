@@ -1,9 +1,9 @@
 /**
- * Unit-Tests für reconcileFolders() — die Ordner-Variante des Reconcilers.
+ * Unit tests for reconcileFolders() — the folder variant of the reconciler.
  *
- * Kernregel (wie bei Dateien): Ein Ordner wird nur dann gelöscht, wenn die Base
- * bezeugt, dass er auf dieser Seite existierte (b.local bzw. b.remote). Sonst
- * gilt er als Neuzugang und wird auf der Gegenseite angelegt.
+ * Core rule (as with files): a folder is only deleted when the base attests
+ * that it existed on that side (b.local resp. b.remote). Otherwise it
+ * counts as a new addition and is created on the opposite side.
  */
 
 import { describe, it, expect } from "vitest";
@@ -11,7 +11,7 @@ import { reconcileFolders } from "../../src/reconciler";
 import { SyncStateEntry, FolderAction } from "../../src/types";
 import { baseEntry } from "../helpers/factories";
 
-/** Bequemer Aufruf: lokale Ordner als Array, remote als [path, id][]. */
+/** Convenient call: local folders as an array, remote as [path, id][]. */
 function run(
   local: string[],
   remote: [string, string][],
@@ -26,7 +26,7 @@ function run(
   });
 }
 
-/** Ordner-Base-Eintrag (isFolder=true) mit gewählten Flags. */
+/** Folder base entry (isFolder=true) with chosen flags. */
 function folderBase(
   path: string,
   local: boolean,
@@ -79,7 +79,7 @@ describe("reconcileFolders — echte Löschungen (Base bezeugt Existenz)", () =>
 
 describe("reconcileFolders — Löschschutz (Base bezeugt Existenz NICHT)", () => {
   it("legt lokal an statt zu löschen, wenn Ordner laut Base nie lokal war", () => {
-    // remote da, lokal fehlt, aber b.local=false -> Neuzugang, kein Löschen.
+    // remote present, local missing, but b.local=false -> new addition, no delete.
     const base = [folderBase("sub", false, true)];
     const actions = run([], [["sub", "d1"]], base);
     expect(actions).toEqual([{ type: "createLocalFolder", path: "sub" }]);
@@ -92,7 +92,7 @@ describe("reconcileFolders — Löschschutz (Base bezeugt Existenz NICHT)", () =
   });
 
   it("REGRESSION: kopierte Ordner-Base darf Drive-Ordner nicht löschen", () => {
-    // Neuer, leerer Vault; Drive hat Ordner; Base kennt sie nur als remote.
+    // New, empty vault; Drive has folders; base only knows them as remote.
     const base = [
       folderBase("a", false, true),
       folderBase("a/b", false, true),
@@ -118,7 +118,7 @@ describe("reconcileFolders — beidseitig verschwunden", () => {
 
 describe("reconcileFolders — Do not delete in Google Drive", () => {
   it("behält den Drive-Ordner statt ihn zu löschen (keepRemoteFolder)", () => {
-    // Arrange: Ordner war beidseitig, lokal jetzt weg.
+    // Arrange: folder was on both sides, now gone locally.
     const base = [folderBase("sub", true, true)];
 
     // Act
@@ -139,13 +139,13 @@ describe("reconcileFolders — Do not delete in Google Drive", () => {
   });
 
   it("holt einen keptRemoteOnly-Ordner NICHT als Zombie lokal zurück", () => {
-    // Arrange: Base sagt local=false, remote=true, keptRemoteOnly; nur in Drive.
+    // Arrange: base says local=false, remote=true, keptRemoteOnly; only in Drive.
     const base = [folderBase("sub", false, true, true)];
 
     // Act
     const actions = run([], [["sub", "d1"]], base, { neverDeleteRemote: true });
 
-    // Assert: kein createLocalFolder.
+    // Assert: no createLocalFolder.
     expect(actions).toEqual([{ type: "noopFolder", path: "sub" }]);
   });
 });

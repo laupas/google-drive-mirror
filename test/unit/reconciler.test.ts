@@ -1,9 +1,9 @@
 /**
- * Unit-Tests für reconcile() — die reine 3-Wege-Merge-Funktion.
+ * Unit tests for reconcile() — the pure 3-way merge function.
  *
- * Jeder der 11 dokumentierten Fälle aus reconciler.ts hat mindestens einen
- * Test, dazu Grenzfälle (mtime-Gleichstand, fehlende md5Checksum, contentEqual).
- * Format: strikt AAA (Arrange / Act / Assert).
+ * Each of the 11 documented cases from reconciler.ts has at least one
+ * test, plus edge cases (mtime tie, missing md5Checksum, contentEqual).
+ * Format: strict AAA (Arrange / Act / Assert).
  */
 
 import { describe, it, expect } from "vitest";
@@ -17,7 +17,7 @@ import {
   DriveFileWithPath,
 } from "../helpers/factories";
 
-/** Bequemer Aufruf mit Arrays statt Maps. */
+/** Convenient call using arrays instead of maps. */
 function run(
   local: LocalFile[],
   remote: DriveFileWithPath[],
@@ -151,7 +151,7 @@ describe("reconcile — Fall 5: beidseitig gelöscht", () => {
     // Act
     const actions = run([], [], base);
 
-    // Assert: nichts zu tun; der verwaiste Base-Eintrag wird von der Engine entfernt.
+    // Assert: nothing to do; the orphaned base entry is removed by the engine.
     expect(actions).toEqual([]);
   });
 });
@@ -320,9 +320,9 @@ describe("reconcile — Fall 11: beide geändert", () => {
 
 describe("reconcile — Grenzfälle: fehlende md5Checksum auf Drive-Seite", () => {
   it("behandelt fehlenden remote md5 mit unveränderter mtime/Größe als NOOP (kein Download-Loop)", () => {
-    // Arrange: Drive-Datei ohne md5Checksum, aber mtime+Größe = Base.
-    // Ohne Fallback würde (undefined !== base.md5) jeden Lauf einen Download
-    // auslösen -> Endlos-Loop. Der mtime/Größen-Fallback verhindert das.
+    // Arrange: Drive file without md5Checksum, but mtime+size = base.
+    // Without a fallback, (undefined !== base.md5) would trigger a download
+    // every run -> endless loop. The mtime/size fallback prevents that.
     const local = [localFile({ path: "x.md", md5: "base-hash" })];
     const remote = [
       driveFile({
@@ -340,12 +340,12 @@ describe("reconcile — Grenzfälle: fehlende md5Checksum auf Drive-Seite", () =
     // Act
     const actions = run(local, remote, base);
 
-    // Assert: nichts geändert -> noop.
+    // Assert: nothing changed -> noop.
     expect(actions).toEqual([{ type: "noop", path: "x.md" }]);
   });
 
   it("behandelt fehlenden remote md5 mit neuerer mtime als Änderung -> Download", () => {
-    // Arrange: kein md5, aber Drive-mtime neuer als Base -> remote geändert.
+    // Arrange: no md5, but Drive mtime newer than base -> changed remotely.
     const local = [localFile({ path: "x.md", md5: "base-hash" })];
     const remote = [
       driveFile({
@@ -363,14 +363,14 @@ describe("reconcile — Grenzfälle: fehlende md5Checksum auf Drive-Seite", () =
     // Act
     const actions = run(local, remote, base);
 
-    // Assert: remote neuer, lokal unverändert -> Fall 10 (download).
+    // Assert: remote newer, local unchanged -> case 10 (download).
     expect(actions).toEqual([
       { type: "download", path: "x.md", driveId: "d1" },
     ]);
   });
 
   it("meldet Konflikt bei beidseitiger Änderung ohne remote md5 (contentEqual=false)", () => {
-    // Arrange: lokal geändert UND Drive-mtime neuer als Base -> beide geändert.
+    // Arrange: changed locally AND Drive mtime newer than base -> both changed.
     const local = [localFile({ path: "x.md", md5: "L", mtimeMs: 5_000 })];
     const remote = [
       driveFile({
@@ -388,16 +388,16 @@ describe("reconcile — Grenzfälle: fehlende md5Checksum auf Drive-Seite", () =
     // Act
     const actions = run(local, remote, base);
 
-    // Assert: beide geändert, contentEqual=false -> Konflikt, lokal jünger gewinnt.
+    // Assert: both changed, contentEqual=false -> conflict, newer local wins.
     expect(actions).toEqual([
       { type: "conflict", path: "x.md", driveId: "d1", winner: "local" },
     ]);
   });
 
   it("propagiert lokale Löschung auch ohne remote md5, wenn Drive unverändert (Löschung gewinnt nicht durch fehlenden Hash)", () => {
-    // Arrange: lokal gelöscht (b.local=true), Drive unverändert (mtime/size=Base),
-    // aber kein md5. Ohne Fallback wäre remoteChanged fälschlich true und die
-    // Löschung würde durch einen Download rückgängig gemacht.
+    // Arrange: deleted locally (b.local=true), Drive unchanged (mtime/size=base),
+    // but no md5. Without a fallback, remoteChanged would wrongly be true and the
+    // deletion would be undone by a download.
     const remote = [
       driveFile({
         path: "del.md",
@@ -419,10 +419,10 @@ describe("reconcile — Grenzfälle: fehlende md5Checksum auf Drive-Seite", () =
       }),
     ];
 
-    // Act: lokal fehlt.
+    // Act: missing locally.
     const actions = run([], remote, base);
 
-    // Assert: echte lokale Löschung wird propagiert -> deleteRemote.
+    // Assert: a genuine local deletion is propagated -> deleteRemote.
     expect(actions).toEqual([
       { type: "deleteRemote", path: "del.md", driveId: "d1" },
     ]);
@@ -431,9 +431,9 @@ describe("reconcile — Grenzfälle: fehlende md5Checksum auf Drive-Seite", () =
 
 describe("reconcile — Löschschutz über local/remote-Flags", () => {
   it("lädt herunter statt zu löschen, wenn die Datei laut Base nie lokal war (b.local=false)", () => {
-    // Arrange: Datei in Drive, fehlt lokal, Base sagt: war nur remote (local=false).
-    // Das ist der Kern-Schutz: eine Datei, die lokal nie existierte, darf nicht
-    // als "lokal gelöscht" gelten und die Drive-Datei löschen.
+    // Arrange: file in Drive, missing locally, base says: was remote only (local=false).
+    // This is the core protection: a file that never existed locally must not
+    // count as "deleted locally" and delete the Drive file.
     const remote = [driveFile({ path: "only-remote.md", id: "d1", md5Checksum: "h" })];
     const base = [
       baseEntry({ path: "only-remote.md", local: false, remote: true, md5: "h", driveId: "d1" }),
@@ -442,7 +442,7 @@ describe("reconcile — Löschschutz über local/remote-Flags", () => {
     // Act
     const actions = run([], remote, base);
 
-    // Assert: download, NICHT deleteRemote.
+    // Assert: download, NOT deleteRemote.
     expect(actions).toEqual([
       { type: "download", path: "only-remote.md", driveId: "d1" },
     ]);
@@ -458,14 +458,14 @@ describe("reconcile — Löschschutz über local/remote-Flags", () => {
     // Act
     const actions = run(local, [], base);
 
-    // Assert: upload, NICHT deleteLocal.
+    // Assert: upload, NOT deleteLocal.
     expect(actions).toEqual([{ type: "upload", path: "only-local.md" }]);
   });
 
   it("REGRESSION: kopierte Base (nie in diesem Vault verarbeitet) darf Drive nicht leeren", () => {
-    // Arrange: Simuliert den echten Bug — neuer, leerer Vault; Drive voll.
-    // Die Base kennt die Datei zwar, aber sie wurde in DIESEM Vault nie lokal
-    // verarbeitet (b.local=false). Erwartung: herunterladen, NICHT löschen.
+    // Arrange: simulates the real bug — new, empty vault; Drive full.
+    // The base does know the file, but it was never processed locally in THIS
+    // vault (b.local=false). Expectation: download, NOT delete.
     const remote = [
       driveFile({ path: "a.md", id: "d1", md5Checksum: "x" }),
       driveFile({ path: "sub/b.md", id: "d2", md5Checksum: "y" }),
@@ -478,7 +478,7 @@ describe("reconcile — Löschschutz über local/remote-Flags", () => {
     // Act
     const actions = run([], remote, base);
 
-    // Assert: ausschließlich Downloads, keine einzige Löschung.
+    // Assert: downloads only, not a single deletion.
     expect(actions).toEqual(
       expect.arrayContaining([
         { type: "download", path: "a.md", driveId: "d1" },
@@ -490,7 +490,7 @@ describe("reconcile — Löschschutz über local/remote-Flags", () => {
   });
 
   it("propagiert eine echte Löschung: war beidseitig (local & remote), jetzt lokal weg", () => {
-    // Arrange: Datei war laut Base auf beiden Seiten, Inhalt unverändert.
+    // Arrange: per the base, file was on both sides, content unchanged.
     const remote = [driveFile({ path: "del.md", id: "d1", md5Checksum: "base-hash" })];
     const base = [
       baseEntry({ path: "del.md", local: true, remote: true, md5: "base-hash", driveId: "d1" }),
@@ -499,7 +499,7 @@ describe("reconcile — Löschschutz über local/remote-Flags", () => {
     // Act
     const actions = run([], remote, base);
 
-    // Assert: jetzt IST es eine echte Löschung -> deleteRemote.
+    // Assert: now it IS a genuine deletion -> deleteRemote.
     expect(actions).toEqual([
       { type: "deleteRemote", path: "del.md", driveId: "d1" },
     ]);
@@ -510,19 +510,19 @@ describe("reconcile — mehrere Pfade in einem Lauf", () => {
   it("verarbeitet unabhängige Pfade zu je eigener Aktion", () => {
     // Arrange
     const local = [
-      localFile({ path: "up.md", md5: "new" }),      // Fall 2: upload
-      localFile({ path: "keep.md", md5: "same" }),   // Fall 8: noop
+      localFile({ path: "up.md", md5: "new" }),      // case 2: upload
+      localFile({ path: "keep.md", md5: "same" }),   // case 8: noop
     ];
     const remote = [
       driveFile({ path: "keep.md", md5Checksum: "same" }),
-      driveFile({ path: "down.md", id: "dD", md5Checksum: "r" }), // Fall 3: download
+      driveFile({ path: "down.md", id: "dD", md5Checksum: "r" }), // case 3: download
     ];
     const base = [baseEntry({ path: "keep.md", md5: "same" })];
 
     // Act
     const actions = run(local, remote, base);
 
-    // Assert: Reihenfolge ist nicht garantiert (Set-Iteration) -> unsortiert vergleichen.
+    // Assert: order is not guaranteed (set iteration) -> compare unsorted.
     expect(actions).toEqual(
       expect.arrayContaining([
         { type: "upload", path: "up.md" },
@@ -536,7 +536,7 @@ describe("reconcile — mehrere Pfade in einem Lauf", () => {
 
 describe("reconcile — neverDeleteRemote (Do not delete in Google Drive)", () => {
   it("ersetzt deleteRemote durch keepRemoteDropLocal, wenn das Flag aktiv ist", () => {
-    // Arrange: Datei war beidseitig, jetzt lokal weg, remote unverändert.
+    // Arrange: file was on both sides, now gone locally, unchanged remotely.
     const remote = [
       driveFile({ path: "del.md", id: "d1", md5Checksum: "base-hash" }),
     ];
@@ -545,7 +545,7 @@ describe("reconcile — neverDeleteRemote (Do not delete in Google Drive)", () =
     // Act
     const actions = run([], remote, base, { neverDeleteRemote: true });
 
-    // Assert: KEINE Drive-Löschung, sondern nur-remote-Markierung.
+    // Assert: NO Drive deletion, just a remote-only marking.
     expect(actions).toEqual([
       { type: "keepRemoteDropLocal", path: "del.md", driveId: "d1" },
     ]);
@@ -568,7 +568,7 @@ describe("reconcile — neverDeleteRemote (Do not delete in Google Drive)", () =
   });
 
   it("holt trotz Flag zurück (download), wenn remote nach dem Sync geändert wurde", () => {
-    // Arrange: remote geändert -> Änderung schlägt Löschung, unabhängig vom Flag.
+    // Arrange: changed remotely -> change beats deletion, regardless of the flag.
     const remote = [
       driveFile({ path: "del.md", id: "d1", md5Checksum: "changed-remote" }),
     ];
@@ -577,18 +577,18 @@ describe("reconcile — neverDeleteRemote (Do not delete in Google Drive)", () =
     // Act
     const actions = run([], remote, base, { neverDeleteRemote: true });
 
-    // Assert: download, nicht keepRemoteDropLocal.
+    // Assert: download, not keepRemoteDropLocal.
     expect(actions).toEqual([
       { type: "download", path: "del.md", driveId: "d1" },
     ]);
   });
 
   it("betrifft NICHT die lokale Löschung (remote gelöscht -> weiterhin deleteLocal)", () => {
-    // Arrange: Datei war beidseitig, jetzt remote weg, lokal unverändert.
+    // Arrange: file was on both sides, now gone remotely, unchanged locally.
     const local = [localFile({ path: "del.md", md5: "base-hash" })];
     const base = [baseEntry({ path: "del.md", md5: "base-hash" })];
 
-    // Act: Flag schützt nur Drive, nicht die lokale Seite.
+    // Act: the flag only protects Drive, not the local side.
     const actions = run(local, [], base, { neverDeleteRemote: true });
 
     // Assert

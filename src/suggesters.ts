@@ -2,7 +2,7 @@ import { AbstractInputSuggest, App, TFolder } from "obsidian";
 import { GoogleDriveClient } from "./drive-client";
 import { t } from "./i18n";
 
-/** Ein Drive-Ordner-Treffer für das Autocomplete. `driveId` ≠ "" = Shared Drive. */
+/** A Drive folder hit for the autocomplete. `driveId` ≠ "" = Shared Drive. */
 export interface DriveFolderHit {
   id: string;
   name: string;
@@ -10,8 +10,8 @@ export interface DriveFolderHit {
 }
 
 /**
- * Autocomplete für lokale Vault-Ordner. Zeigt beim Tippen passende Ordner
- * als Dropdown an (wie in vielen anderen Obsidian-Plugins).
+ * Autocomplete for local vault folders. Shows matching folders as a dropdown
+ * while typing (as in many other Obsidian plugins).
  */
 export class LocalFolderSuggest extends AbstractInputSuggest<TFolder> {
   constructor(
@@ -25,7 +25,7 @@ export class LocalFolderSuggest extends AbstractInputSuggest<TFolder> {
   getSuggestions(query: string): TFolder[] {
     const lower = query.toLowerCase();
     const folders: TFolder[] = [];
-    // Alle Ordner im Vault durchgehen (inkl. Vault-Wurzel).
+    // Iterate over all folders in the vault (incl. vault root).
     for (const file of this.app.vault.getAllLoadedFiles()) {
       if (file instanceof TFolder && file.path.toLowerCase().contains(lower)) {
         folders.push(file);
@@ -48,9 +48,9 @@ export class LocalFolderSuggest extends AbstractInputSuggest<TFolder> {
 }
 
 /**
- * Autocomplete für Google-Drive-Ordner. Sucht beim Tippen per Drive-API
- * nach passenden Ordnern (debounced) und zeigt sie als Dropdown.
- * Schließt Shared Drives (Team Drives) mit ein.
+ * Autocomplete for Google Drive folders. Searches for matching folders via the
+ * Drive API while typing (debounced) and shows them as a dropdown.
+ * Includes Shared Drives (Team Drives).
  */
 export class DriveFolderSuggest extends AbstractInputSuggest<DriveFolderHit> {
   private debounceHandle: number | null = null;
@@ -67,7 +67,7 @@ export class DriveFolderSuggest extends AbstractInputSuggest<DriveFolderHit> {
 
   async getSuggestions(query: string): Promise<DriveFolderHit[]> {
     if (!this.isReady()) return [];
-    // Kleines Debounce, damit nicht jeder Tastendruck einen API-Call auslöst.
+    // Small debounce so that not every keystroke triggers an API call.
     await this.debounce(250);
     try {
       return await this.drive.searchFolders(query, 20);
@@ -79,7 +79,7 @@ export class DriveFolderSuggest extends AbstractInputSuggest<DriveFolderHit> {
   renderSuggestion(folder: DriveFolderHit, el: HTMLElement): void {
     const title = el.createEl("div", { text: folder.name });
     if (folder.driveId) {
-      // Shared-Drive-Ordner sichtbar kennzeichnen.
+      // Visibly mark Shared Drive folders.
       title.createEl("span", {
         text: t("suggestSharedDriveBadge"),
         cls: "gds-suggest-badge",

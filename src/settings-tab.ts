@@ -14,21 +14,21 @@ import { t } from "./i18n";
 import type { SyncStateEntry } from "./types";
 
 /**
- * Einstellungs-UI: OAuth-Setup (eigene Google-Cloud-App), Ordnerwahl,
- * Auto-Sync-Optionen.
+ * Settings UI: OAuth setup (your own Google Cloud app), folder selection,
+ * auto-sync options.
  *
- * Hinweis: In den `.addText/.addToggle`-Callbacks heißt die Komponente `c`
- * (nicht `t`), um nicht die importierte Übersetzungsfunktion `t()` zu verdecken.
+ * Note: In the `.addText/.addToggle` callbacks the component is named `c`
+ * (not `t`), so it doesn't shadow the imported translation function `t()`.
  */
 export class SettingsTab extends PluginSettingTab {
   private unsubscribe: (() => void) | null = null;
   private statusEl: HTMLElement | null = null;
   private syncButton: ButtonComponent | null = null;
-  /** Stabiler Container des Sync-Baums, damit er ohne kompletten Re-Render neu gefüllt werden kann. */
+  /** Stable container for the sync tree, so it can be refilled without a full re-render. */
   private treeEl: HTMLElement | null = null;
-  /** Beschreibungszeile des Sync-Baums (für den "nur in Drive"-Zähler). */
+  /** Description line of the sync tree (for the "Drive-only" counter). */
   private treeDescSetting: Setting | null = null;
-  /** true, wenn der Nutzer gerade von "ganzer Vault" auf Ordnerwahl umschaltet. */
+  /** true when the user is switching from "whole vault" to folder selection. */
   private pendingSubfolder = false;
 
   constructor(app: App, private plugin: GoogleDriveSyncPlugin) {
@@ -36,7 +36,7 @@ export class SettingsTab extends PluginSettingTab {
   }
 
   hide(): void {
-    // Abo beim Schließen des Tabs lösen.
+    // Release the subscription when the tab closes.
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.statusEl = null;
@@ -48,13 +48,13 @@ export class SettingsTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    // Vorheriges Abo lösen (display kann mehrfach laufen).
+    // Release the previous subscription (display can run multiple times).
     this.unsubscribe?.();
     const s = this.plugin.settings;
 
     containerEl.createEl("h2", { text: t("settingsTitle") });
 
-    // ---- 1. Google-Cloud-App ----
+    // ---- 1. Google Cloud app ----
     containerEl.createEl("h3", { text: t("headingCloudAccess") });
     const help = containerEl.createEl("p", { cls: "setting-item-description" });
     help.appendText(t("cloudHelp"));
@@ -96,7 +96,7 @@ export class SettingsTab extends PluginSettingTab {
           .setCta()
           .onClick(async () => {
             try {
-              await this.plugin.login(); // zeigt Erfolgs-Notice selbst
+              await this.plugin.login(); // shows the success notice itself
               this.display();
             } catch (e) {
               log.error("Login-Fehler:", e);
@@ -119,11 +119,11 @@ export class SettingsTab extends PluginSettingTab {
           });
       });
 
-    // ---- 2. Ordner ----
+    // ---- 2. Folders ----
     containerEl.createEl("h3", { text: t("headingFolders") });
 
-    // Toggle "ganzer Vault": AN, wenn kein Unterordner gesetzt UND nicht gerade
-    // auf Ordnerwahl umgeschaltet wurde.
+    // Toggle "whole vault": ON when no subfolder is set AND we're not currently
+    // switching to folder selection.
     const wholeVault = s.localFolder.trim() === "" && !this.pendingSubfolder;
 
     new Setting(containerEl)
@@ -132,18 +132,18 @@ export class SettingsTab extends PluginSettingTab {
       .addToggle((c) =>
         c.setValue(wholeVault).onChange(async (v) => {
           if (v) {
-            // Ganzer Vault -> localFolder leeren (Scope-Wechsel, Base zurücksetzen).
+            // Whole vault -> clear localFolder (scope change, reset base).
             this.pendingSubfolder = false;
             await this.plugin.setLocalFolder("");
           } else {
-            // Auf Ordnerwahl umschalten; Feld + Pflicht-Hinweis erscheinen.
+            // Switch to folder selection; field + required hint appear.
             this.pendingSubfolder = true;
           }
           this.display();
         })
       );
 
-    // Ordnerfeld nur bei ausgeschaltetem "ganzer Vault" zeigen; dann Pflicht.
+    // Show the folder field only when "whole vault" is off; then required.
     if (!wholeVault) {
       new Setting(containerEl)
         .setName(t("localFolderName"))
@@ -155,14 +155,14 @@ export class SettingsTab extends PluginSettingTab {
             .setValue(s.localFolder)
             .onChange(async (v) => {
               const val = v ? normalizePath(v.trim()) : "";
-              // Sobald ein echter Ordner steht, ist der Umschalt-Zustand vorbei.
+              // Once a real folder is set, the switching state is over.
               if (val) this.pendingSubfolder = false;
               await this.plugin.setLocalFolder(val);
             });
           new LocalFolderSuggest(this.app, c.inputEl, async (path) => {
             this.pendingSubfolder = false;
             await this.plugin.setLocalFolder(path);
-            this.display(); // Hinweis auffrischen (Pflicht erfüllt)
+            this.display(); // refresh the hint (requirement met)
           });
         });
     }
@@ -184,24 +184,24 @@ export class SettingsTab extends PluginSettingTab {
         )
           .setValue(s.driveFolderName || s.driveFolderId)
           .onChange(async (v) => {
-            // Freie Eingabe = Ordner-ID (Fallback zum Einfügen einer ID).
+            // Free input = folder ID (fallback for pasting an ID).
             s.driveFolderId = v.trim();
             await this.plugin.saveSettings();
           });
-        // Autocomplete: sucht Drive-Ordner per API beim Tippen.
+        // Autocomplete: searches Drive folders via API while typing.
         new DriveFolderSuggest(
           this.app,
           c.inputEl,
           this.plugin.drive,
           () => this.plugin.oauth.isConfigured(),
           async (folder) => {
-            // Setzt Ordner + setzt Sync-Base zurück, falls sich die ID ändert.
+            // Sets folder + resets the sync base if the ID changes.
             await this.plugin.setDriveFolder(
               folder.id,
               folder.name,
               folder.driveId
             );
-            // Beschreibung ("Aktuell: …") auffrischen.
+            // Refresh the description ("Current: …").
             this.display();
           }
         );
@@ -249,7 +249,7 @@ export class SettingsTab extends PluginSettingTab {
           })
       );
 
-    // ---- 2b. Dateifilter ----
+    // ---- 2b. File filter ----
     new Setting(containerEl)
       .setName(t("allowedExtensionsName"))
       .setDesc(t("allowedExtensionsDesc"))
@@ -276,7 +276,7 @@ export class SettingsTab extends PluginSettingTab {
           })
       );
 
-    // ---- 2c. Löschverhalten ----
+    // ---- 2c. Deletion behavior ----
     new Setting(containerEl)
       .setName(t("neverDeleteRemoteName"))
       .setDesc(t("neverDeleteRemoteDesc"))
@@ -288,10 +288,10 @@ export class SettingsTab extends PluginSettingTab {
         })
       );
 
-    // Sync-Baum: alle Ordner/Dateien; keptRemoteOnly-Einträge mit Checkbox.
+    // Sync tree: all folders/files; keptRemoteOnly entries with a checkbox.
     this.renderSyncTree(containerEl);
 
-    // ---- 3. Auto-Sync ----
+    // ---- 3. Auto-sync ----
     containerEl.createEl("h3", { text: t("headingAutoSync") });
 
     new Setting(containerEl)
@@ -349,7 +349,7 @@ export class SettingsTab extends PluginSettingTab {
         })
       );
 
-    // ---- 4. Aktionen & Status ----
+    // ---- 4. Actions & status ----
     containerEl.createEl("h3", { text: t("headingActionsStatus") });
 
     const lastSync = this.plugin.getLastSyncMs();
@@ -365,16 +365,16 @@ export class SettingsTab extends PluginSettingTab {
         b.setButtonText(t("syncStartButton"))
           .setCta()
           .onClick(async () => {
-            // Nicht auf den Sync warten, damit der Live-Status sichtbar bleibt.
+            // Don't await the sync, so the live status stays visible.
             void this.plugin.runSync(true);
           });
         this.refreshSyncButton();
       });
 
-    // Live-Statuszeile.
+    // Live status line.
     this.statusEl = containerEl.createDiv({ cls: "gds-status" });
 
-    // Sync-Log: Button öffnet ein Live-Modal.
+    // Sync log: button opens a live modal.
     new Setting(containerEl)
       .setName(t("syncLogName"))
       .setDesc(t("syncLogDesc"))
@@ -390,7 +390,7 @@ export class SettingsTab extends PluginSettingTab {
           .onClick(() => this.plugin.status.clearLog())
       );
 
-    // Live-Updates abonnieren (Status + Button-Zustand + "Letzter Sync").
+    // Subscribe to live updates (status + button state + "last sync").
     let wasSyncing = this.plugin.isSyncing();
     this.unsubscribe = this.plugin.status.subscribe(() => {
       this.renderStatus();
@@ -403,8 +403,8 @@ export class SettingsTab extends PluginSettingTab {
           })
         );
       }
-      // Nach einem gerade abgeschlossenen Sync den Baum neu aufbauen
-      // (neue keptRemoteOnly-Einträge live sichtbar machen).
+      // Rebuild the tree after a just-completed sync
+      // (make new keptRemoteOnly entries visible live).
       if (wasSyncing && !syncing) this.refreshSyncTree();
       wasSyncing = syncing;
     });
@@ -426,15 +426,15 @@ export class SettingsTab extends PluginSettingTab {
   }
 
   /**
-   * Rendert den gesamten Sync-Baum (alle Ordner + Dateien aus der Sync-Base) als
-   * einklappbare Struktur. Einträge mit keptRemoteOnly ("nur in Drive") bekommen
-   * eine aktivierte Checkbox; deaktivieren entfernt das Flag, sodass der Eintrag
-   * beim nächsten Sync wieder heruntergeladen/lokal angelegt wird.
+   * Renders the entire sync tree (all folders + files from the sync base) as a
+   * collapsible structure. Entries with keptRemoteOnly ("Drive-only") get a
+   * checked checkbox; unchecking removes the flag so the entry is downloaded/
+   * created locally again on the next sync.
    */
   private renderSyncTree(containerEl: HTMLElement): void {
-    // Überschrift mit Refresh-Button. Der Baum wird in einen STABILEN Container
-    // gerendert, den refreshSyncTree() ohne kompletten Settings-Re-Render neu
-    // füllen kann (nach Sync automatisch + per Button manuell).
+    // Heading with a refresh button. The tree is rendered into a STABLE
+    // container that refreshSyncTree() can refill without a full settings
+    // re-render (automatically after a sync + manually via the button).
     this.treeDescSetting = new Setting(containerEl)
       .setName(t("syncTreeName"))
       .addExtraButton((b) =>
@@ -449,8 +449,8 @@ export class SettingsTab extends PluginSettingTab {
   }
 
   /**
-   * Füllt den Sync-Baum-Container neu (ohne die übrigen Settings anzufassen).
-   * Wird nach jedem Sync (via Status-Abo) und über den Refresh-Button aufgerufen.
+   * Refills the sync-tree container (without touching the rest of the settings).
+   * Called after every sync (via the status subscription) and via the refresh button.
    */
   private refreshSyncTree(): void {
     if (!this.treeEl) return;
@@ -472,9 +472,9 @@ export class SettingsTab extends PluginSettingTab {
     this.renderTreeNodes(this.treeEl, root.children);
   }
 
-  /** Rendert die Kinder eines Baumknotens (Ordner als <details>, Dateien als Zeile). */
+  /** Renders the children of a tree node (folders as <details>, files as a row). */
   private renderTreeNodes(parentEl: HTMLElement, nodes: TreeNode[]): void {
-    // Ordner zuerst, dann Dateien; jeweils alphabetisch.
+    // Folders first, then files; each alphabetically.
     const sorted = [...nodes].sort((a, b) => {
       if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
       return a.name.localeCompare(b.name);
@@ -483,10 +483,10 @@ export class SettingsTab extends PluginSettingTab {
     for (const node of sorted) {
       if (node.isFolder) {
         const details = parentEl.createEl("details", { cls: "gds-tree-folder" });
-        details.open = false; // eingeklappt (User-Wunsch: einklappbar)
+        details.open = false; // collapsed (user request: collapsible)
         const summary = details.createEl("summary");
-        // Zeile in ein eigenes Div im <summary>, damit der Disclosure-Marker
-        // links stehen bleibt und unser Flex-Layout ihn nicht verdrängt.
+        // Row in its own div inside the <summary>, so the disclosure marker
+        // stays on the left and our flex layout doesn't push it away.
         const row = summary.createDiv({ cls: "gds-tree-file gds-tree-folder-row" });
         this.renderTreeRow(row, node, `📁 ${node.name}`);
         const childrenEl = details.createDiv({ cls: "gds-tree-children" });
@@ -499,9 +499,9 @@ export class SettingsTab extends PluginSettingTab {
   }
 
   /**
-   * Rendert eine Baumzeile: Label links, Aktions-Leiste rechts. Die Aktions-
-   * Leiste (`gds-tree-actions`) ist der Andockpunkt für zeilenbezogene Buttons;
-   * aktuell die "nur in Drive"-Checkbox, später weitere (Ignorieren usw.).
+   * Renders a tree row: label on the left, action bar on the right. The action
+   * bar (`gds-tree-actions`) is the docking point for row-related buttons;
+   * currently the "Drive-only" checkbox, later more (ignore, etc.).
    */
   private renderTreeRow(
     rowEl: HTMLElement,
@@ -510,28 +510,28 @@ export class SettingsTab extends PluginSettingTab {
   ): void {
     rowEl.addClass("gds-tree-row");
 
-    // Label links.
+    // Label on the left.
     const nameCls = node.keptRemoteOnly
       ? "gds-tree-label gds-tree-remote-only"
       : "gds-tree-label";
     rowEl.createSpan({ cls: nameCls, text: label });
 
-    // Aktions-Leiste rechts (bleibt auch leer erhalten, damit die Spalte fluchtet).
+    // Action bar on the right (kept even when empty, so the column stays aligned).
     const actions = rowEl.createDiv({ cls: "gds-tree-actions" });
     this.renderRowActions(actions, node);
   }
 
   /**
-   * Baut die zeilenbezogenen Aktions-Buttons (rechtsbündig). Hier weitere
-   * Buttons (Ignorieren, …) ergänzen — jeweils via `addRowAction`.
+   * Builds the row-related action buttons (right-aligned). Add further
+   * buttons (ignore, …) here — each via `addRowAction`.
    *
-   * Aktuell: die "lokal vorhanden"-Checkbox an JEDER Zeile.
-   *  - normaler (beidseitiger) Eintrag: angehakt + deaktiviert (nur Anzeige).
-   *  - "nur in Drive" (keptRemoteOnly): abgehakt + anklickbar; Anhaken stellt die
-   *    Datei beim nächsten Sync wieder lokal her.
+   * Currently: the "exists locally" checkbox on EVERY row.
+   *  - normal (two-sided) entry: checked + disabled (display only).
+   *  - "Drive-only" (keptRemoteOnly): unchecked + clickable; checking restores
+   *    the file locally on the next sync.
    */
   private renderRowActions(actionsEl: HTMLElement, node: TreeNode): void {
-    if (!node.path) return; // reine Struktur-Ordner ohne State-Eintrag
+    if (!node.path) return; // pure structure folders without a state entry
 
     const path = node.path;
     const remoteOnly = node.keptRemoteOnly;
@@ -542,14 +542,14 @@ export class SettingsTab extends PluginSettingTab {
         : t("syncTreeCheckboxLocalTitle"),
       control: (el) => {
         const cb = el.createEl("input", { type: "checkbox" });
-        // Angehakt = lokal vorhanden. keptRemoteOnly = NICHT lokal -> abgehakt.
+        // Checked = exists locally. keptRemoteOnly = NOT local -> unchecked.
         cb.checked = !remoteOnly;
         if (!remoteOnly) {
-          // Normaler Eintrag: nur Statusanzeige, nicht interaktiv.
+          // Normal entry: status display only, not interactive.
           cb.disabled = true;
           return;
         }
-        // "nur in Drive": Anhaken = wiederherstellen (lokal herunterladen).
+        // "Drive-only": checking = restore (download locally).
         cb.onchange = async () => {
           if (cb.checked) {
             await this.plugin.restoreRemoteOnly(path);
@@ -562,9 +562,9 @@ export class SettingsTab extends PluginSettingTab {
   }
 
   /**
-   * Fügt eine einzelne Zeilen-Aktion in die Aktions-Leiste ein. Kapselt das
-   * gemeinsame Verhalten (Klick klappt das umschließende <summary> NICHT auf/zu)
-   * und vereinheitlicht künftige Buttons.
+   * Adds a single row action to the action bar. Encapsulates the shared
+   * behavior (a click does NOT toggle the enclosing <summary> open/closed)
+   * and unifies future buttons.
    */
   private addRowAction(
     actionsEl: HTMLElement,
@@ -578,12 +578,12 @@ export class SettingsTab extends PluginSettingTab {
       cls: `gds-tree-action ${opts.cls ?? ""}`.trim(),
     });
     if (opts.title) host.title = opts.title;
-    // Interaktion in der Aktions-Leiste darf das <summary> nicht togglen.
+    // Interaction in the action bar must not toggle the <summary>.
     host.onclick = (e) => e.stopPropagation();
     opts.control(host);
   }
 
-  /** Aktiviert/deaktiviert den Sync-Button und passt den Text an. */
+  /** Enables/disables the sync button and adjusts the text. */
   private refreshSyncButton(): void {
     if (!this.syncButton) return;
     const running = this.plugin.isSyncing();
@@ -593,7 +593,7 @@ export class SettingsTab extends PluginSettingTab {
     );
   }
 
-  /** Rendert die Live-Statuszeile. */
+  /** Renders the live status line. */
   private renderStatus(): void {
     if (!this.statusEl) return;
     const p = this.plugin.status.getProgress();
@@ -628,8 +628,8 @@ export class SettingsTab extends PluginSettingTab {
 }
 
 /**
- * Modal, das das vollständige Sync-Log anzeigt und sich **live** aktualisiert,
- * solange es geöffnet ist. Neueste Einträge oben.
+ * Modal that shows the full sync log and updates **live** while it is open.
+ * Newest entries on top.
  */
 export class SyncLogModal extends Modal {
   private unsubscribe: (() => void) | null = null;
@@ -655,7 +655,7 @@ export class SyncLogModal extends Modal {
       info.setText(t("logModalCount", { count: entries.length }));
       this.renderList(entries);
     };
-    // Live abonnieren; bei Schließen abmelden.
+    // Subscribe live; unsubscribe on close.
     this.unsubscribe = this.plugin.status.subscribe(render);
     render();
   }
@@ -675,7 +675,7 @@ export class SyncLogModal extends Modal {
       this.listEl.createDiv({ cls: "gds-log-empty", text: t("logModalEmpty") });
       return;
     }
-    // Neueste zuerst.
+    // Newest first.
     for (const e of [...entries].reverse()) {
       const row = this.listEl.createDiv({ cls: `gds-log-row gds-log-${e.level}` });
       const time = new Date(e.ts).toLocaleString();
@@ -685,10 +685,10 @@ export class SyncLogModal extends Modal {
   }
 }
 
-/** Ein Knoten im Sync-Baum (Ordner oder Datei). */
+/** A node in the sync tree (folder or file). */
 export interface TreeNode {
   name: string;
-  /** Voller relativer Pfad (nur bei echten State-Einträgen gesetzt). */
+  /** Full relative path (only set for real state entries). */
   path: string;
   isFolder: boolean;
   keptRemoteOnly: boolean;
@@ -696,9 +696,9 @@ export interface TreeNode {
 }
 
 /**
- * Baut aus den flachen Sync-State-Einträgen eine Baumstruktur. Zwischenordner,
- * die selbst keinen eigenen State-Eintrag haben (nur aus Dateipfaden abgeleitet),
- * werden als reine Struktur-Ordner (ohne Checkbox) erzeugt.
+ * Builds a tree structure from the flat sync-state entries. Intermediate
+ * folders that have no state entry of their own (only derived from file paths)
+ * are created as pure structure folders (without a checkbox).
  */
 export function buildTree(entries: SyncStateEntry[]): TreeNode {
   const root: TreeNode = {
@@ -715,7 +715,7 @@ export function buildTree(entries: SyncStateEntry[]): TreeNode {
       child = {
         name,
         path: parent.path ? `${parent.path}/${name}` : name,
-        isFolder: true, // vorläufig; ein Datei-Eintrag setzt es unten auf false
+        isFolder: true, // tentative; a file entry sets it to false below
         keptRemoteOnly: false,
         children: [],
       };
@@ -733,7 +733,7 @@ export function buildTree(entries: SyncStateEntry[]): TreeNode {
       const isLast = i === parts.length - 1;
       node = findOrAddChild(node, parts[i]);
       if (isLast) {
-        // Der Blatt-Knoten übernimmt die Eigenschaften des State-Eintrags.
+        // The leaf node takes on the properties of the state entry.
         node.isFolder = entry.isFolder;
         node.keptRemoteOnly = Boolean(entry.keptRemoteOnly);
       }

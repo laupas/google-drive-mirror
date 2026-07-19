@@ -31,6 +31,12 @@ npm run dev      # esbuild watch mode (inline sourcemap)
 npm run build    # tsc -noEmit (typecheck) + esbuild production build -> main.js
 ```
 
+- **Language:** **Code comments must ALWAYS be written in English** — every `//`, `/* */`,
+  and JSDoc comment. Never add German (or any other non-English) comments; translate any you
+  encounter. Identifiers and commit messages are English too. The only exception is the
+  `src/i18n/locales/{de,fr,it}.ts` files, whose **string values** are translations by design
+  (and whose comments follow the file's own language convention). Note: some internal
+  `log.*` message strings are still German — that's a separate cleanup, not a comment.
 - **Tests:** `npm test` (vitest, unit + integration under `test/`). The reconciler and the
   core sync logic are test-covered — always back up changes to them with tests. No lint
   setup. Verification before every commit: `npm test` **and** `npm run build`.

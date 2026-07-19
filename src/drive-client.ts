@@ -51,7 +51,7 @@ export class GoogleDriveClient {
   ): Promise<{ files: DriveFile[]; folders: DriveFolder[] }> {
     const files: DriveFile[] = [];
     const folders: DriveFolder[] = [];
-    // Breitensuche über die Ordnerhierarchie.
+    // Breadth-first search over the folder hierarchy.
     const queue: { id: string; prefix: string }[] = [
       { id: rootFolderId, prefix: "" },
     ];
@@ -63,7 +63,7 @@ export class GoogleDriveClient {
         const relativePath = prefix ? `${prefix}/${f.name}` : f.name;
         if (f.mimeType === "application/vnd.google-apps.folder") {
           if (f.trashed) continue;
-          // Ordner selbst als eigener Eintrag ausgeben UND rekursiv absteigen.
+          // Emit the folder itself as its own entry AND descend recursively.
           folders.push({ id: f.id, relativePath });
           queue.push({ id: f.id, prefix: relativePath });
         } else {
@@ -74,7 +74,7 @@ export class GoogleDriveClient {
     return { files, folders };
   }
 
-  /** Listet die direkten Kinder eines Ordners (mit Paginierung). */
+  /** Lists the direct children of a folder (with pagination). */
   private async listChildren(
     folderId: string,
     driveId?: string
@@ -130,9 +130,9 @@ export class GoogleDriveClient {
   }
 
   /**
-   * Erstellt eine neue Datei unter dem Wurzelordner. Legt fehlende
-   * Zwischenordner (aus dem Pfad, z.B. "sub/a/notiz.md") in Drive an, damit die
-   * Ordnerstruktur des Vaults gespiegelt wird.
+   * Creates a new file under the root folder. Creates missing intermediate
+   * folders (from the path, e.g. "sub/a/notiz.md") in Drive, so the vault's
+   * folder structure is mirrored.
    */
   async createFile(
     rootFolderId: string,
@@ -157,9 +157,9 @@ export class GoogleDriveClient {
   }
 
   /**
-   * Stellt sicher, dass die Ordnerkette zum Datei-Pfad in Drive existiert und
-   * liefert die ID des direkten Elternordners. Legt fehlende Ordner an.
-   * Nutzt einen Cache, um wiederholte Lookups innerhalb eines Sync-Laufs zu sparen.
+   * Ensures the folder chain for the file path exists in Drive and returns the
+   * ID of the direct parent folder. Creates missing folders.
+   * Uses a cache to avoid repeated lookups within a sync run.
    */
   private async ensureFolderPath(
     rootFolderId: string,
@@ -332,8 +332,8 @@ export class GoogleDriveClient {
   }
 
   /**
-   * Sucht Drive-Ordner, deren Name den Suchbegriff enthält (für Autocomplete).
-   * Leerer Begriff -> zuletzt geänderte Ordner. Liefert höchstens `limit` Treffer.
+   * Searches Drive folders whose name contains the search term (for autocomplete).
+   * Empty term -> most recently modified folders. Returns at most `limit` hits.
    */
   async searchFolders(
     query: string,
@@ -345,7 +345,7 @@ export class GoogleDriveClient {
     ];
     const q = query.trim();
     if (q) {
-      // Backslash + Hochkommas im Suchbegriff für die Drive-Query escapen.
+      // Escape backslash + single quotes in the search term for the Drive query.
       clauses.push(`name contains '${escapeDriveQueryValue(q)}'`);
     }
     const params = new URLSearchParams({
@@ -469,16 +469,16 @@ interface RawDriveFile {
   trashed?: boolean;
   parents?: string[];
   appProperties?: Record<string, string>;
-  /** Nur gesetzt, wenn die Datei/der Ordner in einem Shared Drive liegt. */
+  /** Only set if the file/folder lives in a Shared Drive. */
   driveId?: string;
 }
 
 /**
- * Escaped einen String-Wert für die Google-Drive-v3-Query-Syntax. Die Grammatik
- * verlangt Backslash als `\\` und Hochkomma als `\'` innerhalb eines Literals —
- * und zwar Backslash ZUERST, sonst würde der aus dem Quote-Escape erzeugte
- * Backslash erneut escaped. Ohne Backslash-Escaping bricht ein Ordnername mit
- * `\` die Query (z.B. Suche findet den Ordner nicht -> Duplikat wird angelegt).
+ * Escapes a string value for the Google Drive v3 query syntax. The grammar
+ * requires backslash as `\\` and single quote as `\'` within a literal —
+ * and backslash FIRST, otherwise the backslash produced by the quote escape
+ * would be escaped again. Without backslash escaping, a folder name containing
+ * `\` breaks the query (e.g. the search doesn't find the folder -> a duplicate is created).
  */
 function escapeDriveQueryValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");

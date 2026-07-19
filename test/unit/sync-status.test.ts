@@ -1,6 +1,6 @@
 /**
- * Unit-Tests für SyncStatus — beobachtbarer Sync-Status + Log.
- * Reine In-Memory-Logik, keine Obsidian-/UI-Abhängigkeiten.
+ * Unit tests for SyncStatus — observable sync status + log.
+ * Pure in-memory logic, no Obsidian/UI dependencies.
  * Format: AAA.
  */
 
@@ -89,10 +89,10 @@ describe("SyncStatus.append — Log-Obergrenze", () => {
     // Arrange
     const status = new SyncStatus();
 
-    // Act: 550 Einträge schreiben.
+    // Act: write 550 entries.
     for (let i = 0; i < 550; i++) status.append("info", `zeile-${i}`);
 
-    // Assert: gekappt auf 500, jüngster Eintrag erhalten, ältester verworfen.
+    // Assert: capped at 500, newest entry kept, oldest discarded.
     const log = status.getLog();
     expect(log).toHaveLength(500);
     expect(log.at(-1)?.message).toBe("zeile-549");
@@ -135,7 +135,7 @@ describe("SyncStatus.subscribe", () => {
       throw new Error("Listener kaputt");
     });
 
-    // Act & Assert: kein Fehler nach außen.
+    // Act & Assert: no error propagates outward.
     expect(() => status.setTotal(1)).not.toThrow();
   });
 });
@@ -159,7 +159,7 @@ describe("SyncStatus.clearLog / touch", () => {
     const listener = vi.fn();
     status.subscribe(listener);
 
-    // Act: idle -> kein emit
+    // Act: idle -> no emit
     status.touch();
 
     // Assert

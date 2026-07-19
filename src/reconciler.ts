@@ -5,7 +5,7 @@ import {
   SyncStateEntry,
 } from "./types";
 
-/** Momentaufnahme einer lokalen Datei (vom SyncEngine erhoben). */
+/** Snapshot of a local file (collected by the SyncEngine). */
 export interface LocalFile {
   path: string;
   md5: string;
@@ -13,45 +13,45 @@ export interface LocalFile {
   mtimeMs: number;
 }
 
-/** Eingaben für einen Reconcile-Lauf. */
+/** Inputs for a reconcile run. */
 export interface ReconcileInput {
-  /** Aktueller lokaler Stand: Pfad -> Datei. */
+  /** Current local state: path -> file. */
   local: Map<string, LocalFile>;
-  /** Aktueller Drive-Stand (nicht-getrasht): Pfad -> Drive-Datei. */
+  /** Current Drive state (non-trashed): path -> Drive file. */
   remote: Map<string, DriveFile>;
-  /** Base vom letzten Sync: Pfad -> Eintrag. */
+  /** Base from the last sync: path -> entry. */
   base: Map<string, SyncStateEntry>;
   /**
-   * "Do not delete in Google Drive": Wenn true, wird eine lokale Löschung NICHT
-   * als `deleteRemote` propagiert, sondern als `keepRemoteDropLocal` (Drive-Datei
-   * bleibt, Base wird auf nur-remote gesetzt). Standard: false.
+   * "Do not delete in Google Drive": When true, a local deletion is NOT
+   * propagated as `deleteRemote` but as `keepRemoteDropLocal` (Drive file
+   * stays, base is set to remote-only). Default: false.
    */
   neverDeleteRemote?: boolean;
 }
 
 /**
- * Vergleicht lokalen Stand, Remote-Stand und die Base (letzter Sync) und
- * leitet für jeden Pfad die auszuführende Aktion ab.
+ * Compares the local state, remote state and the base (last sync) and
+ * derives the action to perform for each path.
  *
- * Grundprinzip:
- *   - "geändert" = md5 weicht von der Base ab (oder keine Base = neu).
- *   - "gelöscht" = fehlt jetzt, war laut Base aber auf DIESER Seite vorhanden
- *     (b.local bzw. b.remote). Genau diese Bedingung verhindert, dass eine
- *     nie hier existente Datei (leere/kopierte/fremde Base) fälschlich als
- *     Löschung interpretiert und die Gegenseite geleert wird.
+ * Basic principle:
+ *   - "changed" = md5 differs from the base (or no base = new).
+ *   - "deleted" = missing now, but according to the base was present on THIS
+ *     side (b.local resp. b.remote). Exactly this condition prevents a
+ *     file that never existed here (empty/copied/foreign base) from being
+ *     wrongly interpreted as a deletion and emptying the other side.
  *
- * Konfliktstrategie: "neuere gewinnt" — bei beidseitiger Änderung entscheidet
- * der jüngere mtime-Zeitstempel.
+ * Conflict strategy: "newer wins" — on a change on both sides the
+ * more recent mtime timestamp decides.
  *
- * Löschungen werden in den Papierkorb propagiert — außer die Gegenseite hat
- * dieselbe Datei ebenfalls geändert; dann gewinnt die Änderung (kein
- * Datenverlust).
+ * Deletions are propagated to the trash — unless the other side has
+ * changed the same file too; then the change wins (no
+ * data loss).
  */
 export function reconcile(input: ReconcileInput): SyncAction[] {
   const { local, remote, base, neverDeleteRemote = false } = input;
   const actions: SyncAction[] = [];
 
-  // Vereinigung aller Pfade, die irgendwo auftauchen.
+  // Union of all paths that appear anywhere.
   const paths = new Set<string>([
     ...local.keys(),
     ...remote.keys(),
@@ -64,10 +64,10 @@ export function reconcile(input: ReconcileInput): SyncAction[] {
     const b = base.get(path);
 
     const localChanged = l ? !b || l.md5 !== b.md5 : false;
-    // Drive liefert für manche Dateien KEINEN md5Checksum. Dann darf "kein Hash"
-    // nicht als "geändert" gelten — sonst würde die Datei bei jedem Lauf neu
-    // heruntergeladen (Endlos-Loop) und eine Löschung fälschlich als Änderung
-    // gewertet. Fallback in dem Fall: mtime/Größe gegen die Base vergleichen.
+    // For some files Drive returns NO md5Checksum. In that case "no hash"
+    // must not count as "changed" — otherwise the file would be re-downloaded
+    // on every run (infinite loop) and a deletion would be wrongly counted
+    // as a change. Fallback in that case: compare mtime/size against the base.
     const remoteChanged = r
       ? !b ||
         (r.md5Checksum !== undefined
@@ -78,36 +78,36 @@ export function reconcile(input: ReconcileInput): SyncAction[] {
     const contentEqual =
       !!l && !!r && !!r.md5Checksum && l.md5 === r.md5Checksum;
 
-    // KERN DES LÖSCHSCHUTZES: Eine Datei gilt nur dann als "gelöscht", wenn die
-    // Base bezeugt, dass sie auf DIESER Seite zuletzt tatsächlich existierte.
-    //   - fehlt lokal, aber Base sagt b.local=true -> echte lokale Löschung
-    //   - fehlt lokal, und b.local=false/keine Base -> war nie hier -> Neuzugang
-    // So kann eine (z.B. aus anderem Vault kopierte) Base, die eine nie lokal
-    // existente Datei nicht als local=true führt, keine Löschung auslösen.
+    // CORE OF THE DELETION SAFETY: A file only counts as "deleted" if the
+    // base attests that it actually existed on THIS side last time.
+    //   - missing locally, but base says b.local=true -> real local deletion
+    //   - missing locally, and b.local=false/no base -> was never here -> new addition
+    // This way a base (e.g. copied from another vault) that does not list a
+    // never-locally-existent file as local=true cannot trigger a deletion.
     const localDeleted = !l && !!b && b.local;
     const remoteDeleted = !r && !!b && b.remote;
 
-    // --- Fall 1: nirgends (mehr) vorhanden ---
+    // --- Case 1: no longer present anywhere ---
     if (!l && !r) {
-      // Nichts zu tun. (Ein evtl. Base-Eintrag wird von der Engine bereinigt.)
+      // Nothing to do. (Any remaining base entry is cleaned up by the engine.)
       continue;
     }
 
-    // --- Fall 2: nur lokal vorhanden, war nie/nicht in Drive -> hochladen ---
+    // --- Case 2: only local, was never/not in Drive -> upload ---
     if (l && !r && !remoteDeleted) {
       actions.push({ type: "upload", path });
       continue;
     }
 
-    // --- Fall 3: nur remote vorhanden ---
+    // --- Case 3: only remote present ---
     if (!l && r && !localDeleted) {
-      // Sonderfall "bewusst nur-remote" (keptRemoteOnly): lokal gelöscht, aber
-      // via "Do not delete in Google Drive" in Drive behalten und absichtlich
-      // NICHT lokal wiederhergestellt. Solange die Drive-Datei unverändert ist,
-      // NICHT herunterladen (kein Zombie). Erst wenn sich die Drive-Datei ändert
-      // (neue Version), gewinnt sie -> Download.
-      // WICHTIG: nur bei gesetztem keptRemoteOnly — eine bloße local=false-Base
-      // (z.B. kopiert/fremd) wird weiterhin heruntergeladen (Datenverlustschutz).
+      // Special case "deliberately remote-only" (keptRemoteOnly): deleted locally, but
+      // kept in Drive via "Do not delete in Google Drive" and intentionally
+      // NOT restored locally. As long as the Drive file is unchanged,
+      // do NOT download (no zombie). Only once the Drive file changes
+      // (new version) does it win -> download.
+      // IMPORTANT: only when keptRemoteOnly is set — a mere local=false base
+      // (e.g. copied/foreign) is still downloaded (data-loss protection).
       if (b?.keptRemoteOnly && !remoteChanged) {
         actions.push({ type: "noop", path });
       } else {
@@ -116,7 +116,7 @@ export function reconcile(input: ReconcileInput): SyncAction[] {
       continue;
     }
 
-    // --- Fall 4: beidseitig vorhanden, aber keine (gültige) Base -> Kollision ---
+    // --- Case 4: present on both sides, but no (valid) base -> collision ---
     if (l && r && !b) {
       if (contentEqual) {
         actions.push({ type: "noop", path });
@@ -131,59 +131,59 @@ export function reconcile(input: ReconcileInput): SyncAction[] {
       continue;
     }
 
-    // --- Fall 6: lokal gelöscht (fehlt lokal, war laut Base lokal da) ---
+    // --- Case 6: deleted locally (missing locally, was local per the base) ---
     if (localDeleted && r) {
       if (remoteChanged) {
-        // Remote wurde nach dem letzten Sync geändert -> Änderung schlägt
-        // Löschung: zurück nach lokal holen (kein Datenverlust).
+        // Remote was changed after the last sync -> change beats
+        // deletion: fetch it back to local (no data loss).
         actions.push({ type: "download", path, driveId: r.id });
       } else if (neverDeleteRemote) {
-        // Setting "Do not delete in Google Drive": Drive-Datei behalten, nur
-        // den Base-Eintrag auf nur-remote setzen (kein Zombie lokal).
+        // Setting "Do not delete in Google Drive": keep Drive file, only
+        // set the base entry to remote-only (no local zombie).
         actions.push({ type: "keepRemoteDropLocal", path, driveId: r.id });
       } else {
-        // Remote unverändert -> Löschung propagieren (Papierkorb).
+        // Remote unchanged -> propagate deletion (trash).
         actions.push({ type: "deleteRemote", path, driveId: r.id });
       }
       continue;
     }
 
-    // --- Fall 7: remote gelöscht (fehlt remote, war laut Base remote da) ---
+    // --- Case 7: deleted remotely (missing remote, was remote per the base) ---
     if (remoteDeleted && l) {
       if (localChanged) {
-        // Lokal wurde geändert -> Änderung schlägt Löschung: hochladen.
+        // Was changed locally -> change beats deletion: upload.
         actions.push({ type: "upload", path });
       } else {
-        // Lokal unverändert -> lokale Löschung propagieren.
+        // Locally unchanged -> propagate the local deletion.
         actions.push({ type: "deleteLocal", path });
       }
       continue;
     }
 
-    // Ab hier: beide vorhanden mit Base. (l und r gesetzt.)
-    if (!l || !r) continue; // Typ-Guard (theoretisch unerreichbar)
+    // From here on: both present with a base. (l and r set.)
+    if (!l || !r) continue; // type guard (theoretically unreachable)
 
-    // --- Fall 8: keine Seite geändert ---
+    // --- Case 8: neither side changed ---
     if (!localChanged && !remoteChanged) {
       actions.push({ type: "noop", path });
       continue;
     }
 
-    // --- Fall 9: nur lokal geändert ---
+    // --- Case 9: only local changed ---
     if (localChanged && !remoteChanged) {
       actions.push({ type: "upload", path });
       continue;
     }
 
-    // --- Fall 10: nur remote geändert ---
+    // --- Case 10: only remote changed ---
     if (!localChanged && remoteChanged) {
       actions.push({ type: "download", path, driveId: r.id });
       continue;
     }
 
-    // --- Fall 11: beide geändert ---
+    // --- Case 11: both changed ---
     if (contentEqual) {
-      // Zufällig identisch -> nur Base aktualisieren.
+      // Coincidentally identical -> only update the base.
       actions.push({ type: "noop", path });
     } else {
       actions.push({
@@ -198,28 +198,28 @@ export function reconcile(input: ReconcileInput): SyncAction[] {
   return actions;
 }
 
-/** Eingaben für den Ordner-Reconcile (Existenz auf beiden Seiten + Base). */
+/** Inputs for the folder reconcile (existence on both sides + base). */
 export interface ReconcileFoldersInput {
-  /** Aktuell lokal vorhandene Ordner (relative Pfade). */
+  /** Currently existing local folders (relative paths). */
   local: Set<string>;
-  /** Aktuell in Drive vorhandene Ordner: Pfad -> Drive-ID. */
+  /** Currently existing folders in Drive: path -> Drive ID. */
   remote: Map<string, string>;
-  /** Ordner-Base vom letzten Sync: Pfad -> Eintrag (isFolder=true). */
+  /** Folder base from the last sync: path -> entry (isFolder=true). */
   base: Map<string, SyncStateEntry>;
   /**
-   * "Do not delete in Google Drive": Wenn true, wird ein lokal gelöschter
-   * Ordner NICHT aus Drive entfernt (analog zu Dateien). Standard: false.
+   * "Do not delete in Google Drive": When true, a locally deleted
+   * folder is NOT removed from Drive (analogous to files). Default: false.
    */
   neverDeleteRemote?: boolean;
 }
 
 /**
- * Reconcile für Ordner — analog zu Dateien, aber ohne Inhalt/Hash. Es zählt
- * nur die Existenz plus die local/remote-Flags der Base.
+ * Reconcile for folders — analogous to files, but without content/hash. Only
+ * existence plus the local/remote flags of the base matter.
  *
- * Löschregel wie bei Dateien: Ein Ordner wird nur dann auf einer Seite gelöscht,
- * wenn die Base bezeugt, dass er dort zuletzt existierte (b.local bzw. b.remote).
- * Sonst gilt er als Neuzugang und wird auf der anderen Seite angelegt.
+ * Deletion rule as for files: A folder is only deleted on one side
+ * if the base attests that it last existed there (b.local resp. b.remote).
+ * Otherwise it counts as a new addition and is created on the other side.
  */
 export function reconcileFolders(
   input: ReconcileFoldersInput
@@ -241,22 +241,22 @@ export function reconcileFolders(
     const localDeleted = !l && !!b && b.local;
     const remoteDeleted = !r && !!b && b.remote;
 
-    // Beide vorhanden -> nichts zu tun.
+    // Both present -> nothing to do.
     if (l && r) {
       actions.push({ type: "noopFolder", path });
       continue;
     }
 
-    // Nur lokal, und nicht als remote-gelöscht bekannt -> in Drive anlegen.
+    // Only local, and not known as remote-deleted -> create in Drive.
     if (l && !r && !remoteDeleted) {
       actions.push({ type: "createRemoteFolder", path });
       continue;
     }
 
-    // Nur remote vorhanden.
+    // Only remote present.
     if (!l && r && !localDeleted) {
-      // "Bewusst nur-remote" (keptRemoteOnly): Ordner in Drive behalten, lokal
-      // NICHT wiederherstellen (kein Zombie). Sonst: lokal anlegen.
+      // "Deliberately remote-only" (keptRemoteOnly): keep folder in Drive, do
+      // NOT restore locally (no zombie). Otherwise: create locally.
       if (b?.keptRemoteOnly) {
         actions.push({ type: "noopFolder", path });
       } else {
@@ -265,11 +265,11 @@ export function reconcileFolders(
       continue;
     }
 
-    // Lokal gelöscht (war laut Base lokal da).
+    // Deleted locally (was local per the base).
     if (localDeleted && r) {
       const driveId = remote.get(path)!;
       if (neverDeleteRemote) {
-        // "Do not delete in Google Drive": Ordner in Drive behalten.
+        // "Do not delete in Google Drive": keep folder in Drive.
         actions.push({ type: "keepRemoteFolder", path, driveId });
       } else {
         actions.push({ type: "deleteRemoteFolder", path, driveId });
@@ -277,13 +277,13 @@ export function reconcileFolders(
       continue;
     }
 
-    // Remote gelöscht (war laut Base remote da) -> lokal löschen.
+    // Deleted remotely (was remote per the base) -> delete locally.
     if (remoteDeleted && l) {
       actions.push({ type: "deleteLocalFolder", path });
       continue;
     }
 
-    // Sonst (z.B. beidseitig weg) -> nichts; Base-Eintrag wird bereinigt.
+    // Otherwise (e.g. gone on both sides) -> nothing; base entry is cleaned up.
   }
 
   return actions;

@@ -1,19 +1,19 @@
 /**
- * Ignore-Filter: Pfade, die vom Sync AUSGESCHLOSSEN werden — komplementär zum
- * `allowedExtensions`-Whitelist-Filter. Der Ignore-Filter versteht sowohl reine
- * Dateiendungen als auch Glob-artige Muster.
+ * Ignore filter: paths that are EXCLUDED from the sync — complementary to the
+ * `allowedExtensions` whitelist filter. The ignore filter understands both plain
+ * file extensions and glob-like patterns.
  *
- * Wie der Endungsfilter MUSS er auf BEIDEN Seiten (lokal UND Drive) identisch
- * greifen, sonst sähe der Reconciler eine gefilterte Datei nur auf einer Seite
- * und würde sie als „auf einer Seite gelöscht" fehlinterpretieren.
+ * Like the extension filter, it MUST apply identically on BOTH sides (local AND
+ * Drive), otherwise the reconciler would see a filtered file on only one side
+ * and misinterpret it as "deleted on one side".
  *
- * Reine Funktionen ohne Obsidian-Abhängigkeit → in `test/unit/ignore.test.ts`
- * getestet.
+ * Pure functions without an Obsidian dependency → tested in
+ * `test/unit/ignore.test.ts`.
  */
 
 /**
- * Zerlegt die kommagetrennte Musterliste in getrimmte, nicht-leere Einträge.
- * Leere Liste bedeutet: nichts ignorieren.
+ * Splits the comma-separated pattern list into trimmed, non-empty entries.
+ * An empty list means: ignore nothing.
  */
 export function parseIgnorePatterns(raw: string): string[] {
   if (!raw) return [];
@@ -24,15 +24,15 @@ export function parseIgnorePatterns(raw: string): string[] {
 }
 
 /**
- * Ist der (sync-relative) Pfad durch mindestens ein Muster ignoriert?
+ * Is the (sync-relative) path ignored by at least one pattern?
  *
- * Unterstützte Musterformen (case-insensitive):
- *  - Reine Endung: `tmp` oder `.tmp` → matcht jede Datei mit dieser Endung
- *    (Bequemlichkeit, damit man wie beim Endungsfilter tippen kann).
- *  - Glob: `*` (beliebig viele Zeichen außer „/"), `**` (auch über „/" hinweg),
- *    `?` (genau ein Zeichen außer „/"). Enthält das Muster ein „/", wird es
- *    gegen den GANZEN Pfad geprüft, sonst zusätzlich gegen den Dateinamen
- *    (letztes Segment) — so matcht `*.log` auch `sub/a.log`.
+ * Supported pattern forms (case-insensitive):
+ *  - Plain extension: `tmp` or `.tmp` → matches any file with that extension
+ *    (convenience, so you can type it like in the extension filter).
+ *  - Glob: `*` (any number of characters except „/"), `**` (also across „/"),
+ *    `?` (exactly one character except „/"). If the pattern contains a „/", it
+ *    is checked against the WHOLE path, otherwise additionally against the file
+ *    name (last segment) — so `*.log` also matches `sub/a.log`.
  */
 export function isIgnored(path: string, patterns: string[]): boolean {
   if (patterns.length === 0) return false;
@@ -42,11 +42,11 @@ export function isIgnored(path: string, patterns: string[]): boolean {
   for (const raw of patterns) {
     const pat = raw.toLowerCase();
 
-    // Reine Endung (kein Glob-Zeichen, kein „/") → als „*.<ext>" behandeln.
+    // Plain extension (no glob character, no „/") → treat as „*.<ext>".
     if (!/[*?/]/.test(pat)) {
       const ext = pat.startsWith(".") ? pat.slice(1) : pat;
       if (base.endsWith("." + ext)) return true;
-      // Zusätzlich exakter Dateiname (z.B. Muster „.gitignore" oder „notes").
+      // Additionally an exact file name (e.g. pattern „.gitignore" or „notes").
       if (base === pat || base === ext) return true;
       continue;
     }
@@ -55,7 +55,7 @@ export function isIgnored(path: string, patterns: string[]): boolean {
     if (pat.includes("/")) {
       if (re.test(lower)) return true;
     } else {
-      // Ohne „/" gegen den Dateinamen matchen (greift auf jeder Tiefe).
+      // Without „/", match against the file name (applies at any depth).
       if (re.test(base)) return true;
     }
   }
@@ -63,9 +63,9 @@ export function isIgnored(path: string, patterns: string[]): boolean {
 }
 
 /**
- * Übersetzt ein Glob-Muster in eine anker­gebundene RegExp.
- * `**` → beliebig (inkl. „/"), `*` → beliebig außer „/", `?` → ein Zeichen
- * außer „/". Alle übrigen Zeichen werden literal escaped.
+ * Translates a glob pattern into an anchored RegExp.
+ * `**` → anything (incl. „/"), `*` → anything except „/", `?` → one character
+ * except „/". All remaining characters are escaped literally.
  */
 function globToRegExp(glob: string): RegExp {
   let out = "";
@@ -81,7 +81,7 @@ function globToRegExp(glob: string): RegExp {
     } else if (c === "?") {
       out += "[^/]";
     } else {
-      // RegExp-Sonderzeichen escapen.
+      // Escape RegExp special characters.
       out += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
     }
   }

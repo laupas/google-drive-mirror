@@ -2,12 +2,12 @@ import { PluginStorage } from "./storage";
 import { t } from "./i18n";
 
 /**
- * Zentraler Sync-Status + Log. Beobachtbar über einfache Listener, damit
- * Statusleiste und Settings-UI live aktualisiert werden können.
+ * Central sync status + log. Observable via simple listeners, so that the
+ * status bar and settings UI can be updated live.
  *
- * Das Log wird in einer eigenen Datei (`sync-log.json`) im Plugin-Ordner
- * persistiert (nicht data.json) und beim Speichern automatisch um Einträge
- * bereinigt, die älter als die konfigurierte Aufbewahrungsdauer sind.
+ * The log is persisted in its own file (`sync-log.json`) in the plugin folder
+ * (not data.json) and, on save, automatically pruned of entries older than
+ * the configured retention period.
  */
 
 const LOG_FILE = "sync-log.json";
@@ -15,20 +15,20 @@ const LOG_FILE = "sync-log.json";
 export type SyncPhase = "idle" | "running" | "done" | "error";
 
 export interface SyncProgress {
-  /** Aktuelle Phase. */
+  /** Current phase. */
   phase: SyncPhase;
-  /** Kurzer, menschenlesbarer Statustext (z.B. "Lade hoch 3/12"). */
+  /** Short, human-readable status text (e.g. "Uploading 3/12"). */
   message: string;
-  /** Erledigte Schritte im aktuellen Lauf. */
+  /** Completed steps in the current run. */
   current: number;
-  /** Gesamtschritte im aktuellen Lauf (0 = unbekannt/keiner). */
+  /** Total steps in the current run (0 = unknown/none). */
   total: number;
-  /** Startzeit des laufenden Syncs (ms) oder 0. */
+  /** Start time of the running sync (ms) or 0. */
   startedMs: number;
 }
 
 export interface LogEntry {
-  /** Zeitstempel (ms). */
+  /** Timestamp (ms). */
   ts: number;
   level: "info" | "success" | "warn" | "error";
   message: string;
@@ -49,17 +49,17 @@ export class SyncStatus {
   private saveHandle: number | null = null;
 
   /**
-   * @param storage         Persistenz-Helfer (optional; ohne wird nicht gespeichert).
-   * @param retentionHours  Liefert die aktuelle Aufbewahrungsdauer in Stunden
-   *                        (0 = nie löschen). Als Funktion, damit Settings-Änderungen
-   *                        sofort greifen.
+   * @param storage         Persistence helper (optional; without it nothing is saved).
+   * @param retentionHours  Returns the current retention period in hours
+   *                        (0 = never delete). A function, so that settings changes
+   *                        take effect immediately.
    */
   constructor(
     private storage?: PluginStorage,
     private retentionHours: () => number = () => 24
   ) {}
 
-  /** Lädt das Log aus der Datei und wendet die Retention an. */
+  /** Loads the log from the file and applies retention. */
   async load(): Promise<void> {
     if (!this.storage) return;
     const data = await this.storage.readJson<{ entries?: LogEntry[] }>(
@@ -71,10 +71,10 @@ export class SyncStatus {
     this.emit();
   }
 
-  /** Persistiert das Log (debounced), nach Retention-Bereinigung. */
+  /** Persists the log (debounced), after retention pruning. */
   private scheduleSave(): void {
     if (!this.storage) return;
-    if (this.saveHandle !== null) return; // bereits geplant
+    if (this.saveHandle !== null) return; // already scheduled
     this.saveHandle = setTimeout(() => {
       this.saveHandle = null;
       void this.save();
@@ -87,7 +87,7 @@ export class SyncStatus {
     await this.storage.writeJson(LOG_FILE, { version: 1, entries: this.log });
   }
 
-  /** Entfernt Einträge, die älter als die Aufbewahrungsdauer sind. */
+  /** Removes entries older than the retention period. */
   private pruneOld(): void {
     const hours = this.retentionHours();
     if (hours > 0) {
@@ -99,7 +99,7 @@ export class SyncStatus {
     }
   }
 
-  /** Abonniert Änderungen; gibt eine Unsubscribe-Funktion zurück. */
+  /** Subscribes to changes; returns an unsubscribe function. */
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
@@ -119,12 +119,12 @@ export class SyncStatus {
     void this.save();
   }
 
-  /** Löst ein Re-Render aus, ohne Daten zu ändern (z.B. für tickende Dauer). */
+  /** Triggers a re-render without changing data (e.g. for ticking duration). */
   touch(): void {
     if (this.progress.phase === "running") this.emit();
   }
 
-  // ---- Mutationen (von der Engine aufgerufen) ----
+  // ---- Mutations (called by the engine) ----
 
   start(message = t("statusSyncStarted"), startedMs: number): void {
     this.progress = {
@@ -142,7 +142,7 @@ export class SyncStatus {
     this.emit();
   }
 
-  /** Aktualisiert den laufenden Fortschritt. */
+  /** Updates the running progress. */
   update(message: string, current: number, total?: number): void {
     this.progress = {
       ...this.progress,
@@ -153,7 +153,7 @@ export class SyncStatus {
     this.emit();
   }
 
-  /** Schreibt eine Logzeile ohne Fortschrittsänderung. */
+  /** Writes a log line without a progress change. */
   append(level: LogEntry["level"], message: string): void {
     this.log.push({ ts: nowMs(), level, message });
     if (this.log.length > this.maxLog) {
@@ -177,15 +177,15 @@ export class SyncStatus {
       try {
         fn();
       } catch {
-        /* Listener-Fehler dürfen den Sync nicht beeinflussen. */
+        /* Listener errors must not affect the sync. */
       }
     }
   }
 }
 
 /**
- * Zeit-Helfer. `Date.now()` ist im normalen Plugin-Runtime verfügbar; die
- * Kapselung erleichtert Tests.
+ * Time helper. `Date.now()` is available in the normal plugin runtime; the
+ * encapsulation makes testing easier.
  */
 function nowMs(): number {
   return Date.now();

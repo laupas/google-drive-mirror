@@ -2,20 +2,20 @@ import { Vault } from "obsidian";
 import { log } from "./logger";
 
 /**
- * Liest/schreibt JSON-Dateien im Plugin-Konfigurationsordner
- * (`<vault>/.obsidian/plugins/<pluginId>/`). Wird genutzt, um den großen,
- * häufig geänderten Sync-State und das Log getrennt von data.json (Settings)
- * zu halten — so wird data.json nicht bei jedem Sync komplett neu geschrieben.
+ * Reads/writes JSON files in the plugin configuration folder
+ * (`<vault>/.obsidian/plugins/<pluginId>/`). Used to keep the large,
+ * frequently changed sync state and the log separate from data.json (settings)
+ * — so data.json isn't fully rewritten on every sync.
  */
 export class PluginStorage {
   constructor(private vault: Vault, private pluginId: string) {}
 
-  /** Vollständiger Pfad einer Datei im Plugin-Ordner. */
+  /** Full path of a file in the plugin folder. */
   private path(fileName: string): string {
     return `${this.vault.configDir}/plugins/${this.pluginId}/${fileName}`;
   }
 
-  /** Liest+parst eine JSON-Datei; gibt `fallback` zurück, wenn sie fehlt/kaputt ist. */
+  /** Reads+parses a JSON file; returns `fallback` if it is missing/corrupt. */
   async readJson<T>(fileName: string, fallback: T): Promise<T> {
     const p = this.path(fileName);
     try {
@@ -28,13 +28,13 @@ export class PluginStorage {
     }
   }
 
-  /** Serialisiert und schreibt ein Objekt als JSON. */
+  /** Serializes and writes an object as JSON. */
   async writeJson(fileName: string, data: unknown): Promise<void> {
     const p = this.path(fileName);
     await this.vault.adapter.write(p, JSON.stringify(data));
   }
 
-  /** Löscht eine Datei, falls vorhanden. */
+  /** Deletes a file if it exists. */
   async remove(fileName: string): Promise<void> {
     const p = this.path(fileName);
     if (await this.vault.adapter.exists(p)) {

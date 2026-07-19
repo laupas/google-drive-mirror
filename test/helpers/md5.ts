@@ -1,7 +1,7 @@
 /**
- * MD5-Hex eines Strings — identisch zur Hash-Berechnung der SyncEngine
- * (createHash("md5") über den Byte-Inhalt). Wird in Integrationstests
- * gebraucht, um Base-Einträge mit dem tatsächlichen lokalen Hash zu bestücken.
+ * MD5 hex of a string — identical to the SyncEngine's hash computation
+ * (createHash("md5") over the byte content). Used in integration tests
+ * to populate base entries with the actual local hash.
  */
 
 import { createHash } from "crypto";

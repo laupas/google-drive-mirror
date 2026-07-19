@@ -4,14 +4,14 @@ import { log } from "./logger";
 
 const STATE_FILE = "sync-state.json";
 
-/** Serialisierungsformat der State-Datei. */
+/** Serialization format of the state file. */
 interface StateFile {
   version: 1;
   /**
-   * Identität des Vaults + Drive-Ordners, für die diese Base gilt. Passt sie
-   * beim Laden nicht (z.B. Datei aus anderem Vault kopiert), wird die Base
-   * verworfen — sonst würde der Reconciler alle Dateien für "lokal gelöscht"
-   * halten und den Drive leeren.
+   * Identity of the vault + Drive folder this base applies to. If it doesn't
+   * match on load (e.g. file copied from another vault), the base is
+   * discarded — otherwise the reconciler would treat all files as "deleted
+   * locally" and empty the Drive.
    */
   scopeId?: string;
   lastSyncMs: number;
@@ -19,25 +19,25 @@ interface StateFile {
 }
 
 /**
- * Kapselt den persistenten Sync-Zustand (die "Base" des 3-Wege-Vergleichs).
+ * Encapsulates the persistent sync state (the "base" of the 3-way comparison).
  *
- * Der Zustand merkt sich für jede zuletzt erfolgreich gesyncte Datei ihren
- * Hash/Größe/mtime auf beiden Seiten. Damit lässt sich beim nächsten Lauf
- * unterscheiden: lokal geändert / remote geändert / gelöscht.
+ * The state remembers, for each file that last synced successfully, its
+ * hash/size/mtime on both sides. This allows distinguishing on the next run:
+ * changed locally / changed remotely / deleted.
  *
- * Wird in einer EIGENEN Datei (`sync-state.json`) im Plugin-Ordner gehalten,
- * nicht in data.json — so bleibt data.json (Settings) klein und wird nicht bei
- * jedem Sync neu geschrieben.
+ * Kept in its OWN file (`sync-state.json`) in the plugin folder, not in
+ * data.json — so data.json (settings) stays small and isn't rewritten on
+ * every sync.
  */
 export class SyncStateStore {
   private entries: Record<string, SyncStateEntry> = {};
   private lastSyncMs = 0;
 
   /**
-   * @param storage  Persistenz-Helfer.
-   * @param scopeId  Liefert die aktuelle Scope-Identität (Vault + Drive-Ordner).
-   *                 Als Funktion, weil sie sich zur Laufzeit ändern kann
-   *                 (Ordnerwechsel).
+   * @param storage  Persistence helper.
+   * @param scopeId  Returns the current scope identity (vault + Drive folder).
+   *                 A function, because it can change at runtime
+   *                 (folder change).
    */
   constructor(
     private storage: PluginStorage,
@@ -45,9 +45,9 @@ export class SyncStateStore {
   ) {}
 
   /**
-   * Lädt den State aus der Datei. Optional: Migration eines Alt-States.
-   * Verwirft die geladene Base, wenn ihre `scopeId` nicht zur aktuellen passt
-   * (z.B. aus anderem Vault kopiert) — Schutz gegen Massenlöschung.
+   * Loads the state from the file. Optional: migration of an old state.
+   * Discards the loaded base if its `scopeId` doesn't match the current one
+   * (e.g. copied from another vault) — protection against mass deletion.
    */
   async load(migrateFrom?: {
     entries: Record<string, SyncStateEntry>;
@@ -56,7 +56,7 @@ export class SyncStateStore {
     const data = await this.storage.readJson<StateFile | null>(STATE_FILE, null);
     if (data && data.entries) {
       const current = this.scopeId();
-      // scopeId fehlt (alte Datei) -> tolerieren; passt sie nicht -> verwerfen.
+      // scopeId missing (old file) -> tolerate; doesn't match -> discard.
       if (data.scopeId && data.scopeId !== current) {
         log.warn(
           "Sync-State stammt aus anderem Vault/Ordner " +
@@ -65,14 +65,14 @@ export class SyncStateStore {
         );
         this.entries = {};
         this.lastSyncMs = 0;
-        await this.save(); // mit korrekter scopeId überschreiben
+        await this.save(); // overwrite with the correct scopeId
         return;
       }
       this.entries = data.entries;
       this.lastSyncMs = data.lastSyncMs ?? 0;
       return;
     }
-    // Keine State-Datei vorhanden -> ggf. aus altem data.json migrieren.
+    // No state file present -> migrate from old data.json if applicable.
     if (migrateFrom && Object.keys(migrateFrom.entries).length > 0) {
       this.entries = migrateFrom.entries;
       this.lastSyncMs = migrateFrom.lastSyncMs;
@@ -81,7 +81,7 @@ export class SyncStateStore {
     }
   }
 
-  /** Persistiert den aktuellen State in die Datei. */
+  /** Persists the current state to the file. */
   async save(): Promise<void> {
     const file: StateFile = {
       version: 1,
@@ -112,13 +112,13 @@ export class SyncStateStore {
     delete this.entries[path];
   }
 
-  /** Leert den gesamten State (z.B. bei Ordnerwechsel/manuellem Reset). */
+  /** Clears the entire state (e.g. on folder change/manual reset). */
   clear(): void {
     this.entries = {};
     this.lastSyncMs = 0;
   }
 
-  /** Alle bekannten Pfade aus der letzten Sync-Base. */
+  /** All known paths from the last sync base. */
   knownPaths(): string[] {
     return Object.keys(this.entries);
   }
@@ -127,7 +127,7 @@ export class SyncStateStore {
     return Object.values(this.entries);
   }
 
-  /** Findet den Base-Eintrag zu einer Drive-ID (für Umbenennungs-/Move-Fälle). */
+  /** Finds the base entry for a Drive ID (for rename/move cases). */
   byDriveId(driveId: string): SyncStateEntry | undefined {
     return this.all().find((e) => e.driveId === driveId);
   }

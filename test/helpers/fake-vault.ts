@@ -1,11 +1,11 @@
 /**
- * In-Memory-Fake für Obsidians Vault + DataAdapter, so viel wie die SyncEngine
- * tatsächlich benutzt. Kein echtes Dateisystem, kein Obsidian nötig.
+ * In-memory fake for Obsidian's Vault + DataAdapter, as much as the SyncEngine
+ * actually uses. No real filesystem, no Obsidian needed.
  *
- * Dateien werden als { content, mtime } in einer Map gehalten. Die Engine ruft:
- *   - vault.getFiles()                     -> Liste der TFile
+ * Files are held as { content, mtime } in a map. The engine calls:
+ *   - vault.getFiles()                     -> list of TFile
  *   - vault.getAbstractFileByPath(path)    -> TFile | null
- *   - vault.trash(file, system)            -> löscht Datei
+ *   - vault.trash(file, system)            -> deletes file
  *   - vault.adapter.readBinary/writeBinary/exists/stat/mkdir/trashSystem
  */
 
@@ -28,17 +28,17 @@ export class FakeVault {
     this.adapter = new FakeAdapter(this.files);
   }
 
-  /** Test-Setup: Datei mit Textinhalt und mtime anlegen. */
+  /** Test setup: create a file with text content and mtime. */
   seed(path: string, content: string, mtime = 1_000): void {
     this.files.set(path, { content: toArrayBuffer(content), mtime });
   }
 
-  /** Test-Assertion: existiert die Datei (nicht getrasht)? */
+  /** Test assertion: does the file exist (not trashed)? */
   has(path: string): boolean {
     return this.files.has(path);
   }
 
-  /** Test-Assertion: Textinhalt der Datei. */
+  /** Test assertion: text content of the file. */
   read(path: string): string {
     const e = this.files.get(path);
     if (!e) throw new Error(`FakeVault: keine Datei ${path}`);
@@ -62,9 +62,9 @@ export class FakeVault {
   }
 
   /**
-   * Die Engine nutzt dies für die Ordner-Erhebung (collectLocalFolders).
-   * Der Fake hält keine echten Ordner-Objekte -> leere Liste. Dadurch bleiben
-   * die bestehenden reinen Datei-Tests unverändert gültig.
+   * The engine uses this for folder collection (collectLocalFolders).
+   * The fake holds no real folder objects -> empty list. This keeps
+   * the existing file-only tests valid and unchanged.
    */
   getAllLoadedFiles(): TFile[] {
     return [];
@@ -99,7 +99,7 @@ class FakeAdapter {
   }
 
   async mkdir(_path: string): Promise<void> {
-    // In-Memory: Ordner sind implizit, No-Op.
+    // In-memory: folders are implicit, no-op.
   }
 
   async trashSystem(path: string): Promise<boolean> {

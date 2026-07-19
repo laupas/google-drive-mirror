@@ -1,17 +1,17 @@
 /**
- * Zentrales i18n-Modul. Übersetzungen folgen automatisch der in Obsidian
- * eingestellten UI-Sprache; unbekannte/nicht unterstützte Sprachen und die
- * Testumgebung (kein `window`) fallen auf Englisch zurück.
+ * Central i18n module. Translations automatically follow the UI language set
+ * in Obsidian; unknown/unsupported languages and the test environment (no
+ * `window`) fall back to English.
  *
- * Verwendung:
+ * Usage:
  *   import { t } from "./i18n";
- *   t("statusReady")                     // einfacher Lookup
- *   t("uploadAction", { path: "a.md" })  // mit {path}-Platzhaltern
+ *   t("statusReady")                     // simple lookup
+ *   t("uploadAction", { path: "a.md" })  // with {path} placeholders
  *
- * WICHTIG: Dieses Modul darf beim Import KEINE Runtime-Abhängigkeit auf
- * `window`/`moment` auf Top-Level haben — sonst brechen die Node-Tests. Die
- * Spracherkennung (`detectLocale`) ist deshalb defensiv gekapselt und wird nur
- * bei Bedarf aufgerufen (aus `initLocale()` beim Plugin-Start).
+ * IMPORTANT: On import, this module must have NO top-level runtime dependency
+ * on `window`/`moment` — otherwise the Node tests break. Language detection
+ * (`detectLocale`) is therefore defensively encapsulated and only called
+ * when needed (from `initLocale()` at plugin start).
  */
 
 import { en, Messages } from "./locales/en";
@@ -19,26 +19,26 @@ import { de } from "./locales/de";
 import { it } from "./locales/it";
 import { fr } from "./locales/fr";
 
-/** Unterstützte UI-Sprachen. Englisch ist Default & Fallback. */
+/** Supported UI languages. English is the default & fallback. */
 export type Locale = "en" | "de" | "it" | "fr";
 
-/** Schlüssel einer Übersetzung (aus der englischen Autoritätsquelle abgeleitet). */
+/** Key of a translation (derived from the authoritative English source). */
 export type MessageKey = keyof Messages;
 
-/** Parameter für Platzhalter-Interpolation (`{name}` → Wert). */
+/** Parameters for placeholder interpolation (`{name}` → value). */
 export type MessageParams = Record<string, string | number>;
 
-/** Locale → Wörterbuch. `en` ist vollständig; die anderen fallen darauf zurück. */
+/** Locale → dictionary. `en` is complete; the others fall back to it. */
 const DICTS: Record<Locale, Partial<Messages>> = { en, de, it, fr };
 
-/** Aktuell aktive Sprache. Default Englisch, bis `initLocale()` läuft. */
+/** Currently active language. Defaults to English until `initLocale()` runs. */
 let activeLocale: Locale = "en";
 
 /**
- * Ermittelt die Obsidian-UI-Sprache defensiv. Obsidian speichert die gewählte
- * Sprache in `window.localStorage["language"]` (leer/"en" = Englisch). Jede
- * Ausnahme (kein `window`, kein `localStorage`, Zugriffsfehler) führt zu "en",
- * damit dieses Modul auch außerhalb von Obsidian (Tests) funktioniert.
+ * Determines the Obsidian UI language defensively. Obsidian stores the chosen
+ * language in `window.localStorage["language"]` (empty/"en" = English). Any
+ * exception (no `window`, no `localStorage`, access error) results in "en", so
+ * that this module also works outside of Obsidian (tests).
  */
 export function detectLocale(): Locale {
   try {
@@ -49,34 +49,34 @@ export function detectLocale(): Locale {
   }
 }
 
-/** Bildet einen rohen Sprachcode auf eine unterstützte Locale ab (sonst "en"). */
+/** Maps a raw language code to a supported locale (otherwise "en"). */
 function normalizeLocale(raw: string | null | undefined): Locale {
   if (!raw) return "en";
-  // Obsidian nutzt teils Codes wie "pt-BR"; nur das Primär-Subtag zählt hier.
+  // Obsidian sometimes uses codes like "pt-BR"; only the primary subtag counts here.
   const base = raw.toLowerCase().split("-")[0];
   if (base === "de" || base === "it" || base === "fr") return base;
   return "en";
 }
 
-/** Setzt die aktive Sprache anhand der erkannten Obsidian-UI-Sprache. */
+/** Sets the active language based on the detected Obsidian UI language. */
 export function initLocale(): void {
   activeLocale = detectLocale();
 }
 
-/** Setzt die aktive Sprache explizit (v.a. für Tests). */
+/** Sets the active language explicitly (mainly for tests). */
 export function setLocale(locale: Locale): void {
   activeLocale = locale;
 }
 
-/** Aktuell aktive Sprache. */
+/** Currently active language. */
 export function getLocale(): Locale {
   return activeLocale;
 }
 
 /**
- * Übersetzt einen Schlüssel in die aktive Sprache. Lookup-Reihenfolge:
- * aktive Sprache → Englisch (Fallback) → der Schlüssel selbst (letzter Notnagel,
- * sollte nie sichtbar werden). `{name}`-Platzhalter werden aus `params` gefüllt.
+ * Translates a key into the active language. Lookup order:
+ * active language → English (fallback) → the key itself (last resort,
+ * should never become visible). `{name}` placeholders are filled from `params`.
  */
 export function t(key: MessageKey, params?: MessageParams): string {
   const template =
@@ -84,7 +84,7 @@ export function t(key: MessageKey, params?: MessageParams): string {
   return params ? interpolate(template, params) : template;
 }
 
-/** Ersetzt `{name}`-Platzhalter im Template durch die Werte aus `params`. */
+/** Replaces `{name}` placeholders in the template with the values from `params`. */
 function interpolate(template: string, params: MessageParams): string {
   return template.replace(/\{(\w+)\}/g, (match, name: string) => {
     const value = params[name];

@@ -1,8 +1,8 @@
 /**
- * Unit-Tests für GoogleDriveClient — HTTP über den gemockten requestUrl.
- * Geprüft: pathOf (relativePath), rekursives Listing + Mapping, Pagination,
- * Fehlerbehandlung (assertOk), getFolder-Typ-Guard, Query-/Escaping-Bau,
- * createFile inkl. Ordner-Mirroring (ensureFolderPath) und Ordner-Cache.
+ * Unit tests for GoogleDriveClient — HTTP via the mocked requestUrl.
+ * Covered: pathOf (relativePath), recursive listing + mapping, pagination,
+ * error handling (assertOk), getFolder type guard, query/escaping construction,
+ * createFile incl. folder mirroring (ensureFolderPath) and folder cache.
  *
  * Format: AAA.
  */
@@ -14,7 +14,7 @@ import { OAuthManager } from "../../src/oauth";
 
 const mockedRequestUrl = vi.mocked(requestUrl);
 
-/** OAuthManager-Stub, der immer denselben Token liefert. */
+/** OAuthManager stub that always returns the same token. */
 function fakeOAuth(): OAuthManager {
   return {
     getAccessToken: vi.fn().mockResolvedValue("test-token"),
@@ -25,7 +25,7 @@ function client(): GoogleDriveClient {
   return new GoogleDriveClient(fakeOAuth());
 }
 
-/** Erfolgreiche listFiles-Antwort mit gegebenen Roh-Dateien. */
+/** Successful listFiles response with the given raw files. */
 function listResponse(files: unknown[], nextPageToken?: string) {
   return {
     status: 200,
@@ -53,7 +53,7 @@ describe("GoogleDriveClient.pathOf", () => {
     const path = c.pathOf(raw as never);
 
     // Assert
-    expect(path).toBe("unter/ordner/flach.md");
+    expect(path).toBe("unter/ordner/flach.md"); // "under/folder/flat.md"
   });
 
   it("fällt auf den Dateinamen zurück, wenn relativePath fehlt", () => {
@@ -88,11 +88,11 @@ describe("GoogleDriveClient.listFiles — Mapping", () => {
       ])
     );
 
-    // Act: Wurzelordner enthält genau diese Datei, keine Unterordner
-    // -> genau eine Kinder-Abfrage.
+    // Act: root folder contains exactly this file, no subfolders
+    // -> exactly one children query.
     const { files } = await c.listFiles("root");
 
-    // Assert: gemappte Felder plus relativePath (= name auf oberster Ebene).
+    // Assert: mapped fields plus relativePath (= name at top level).
     expect(files).toHaveLength(1);
     expect(files[0]).toEqual({
       id: "abc",
@@ -124,7 +124,7 @@ describe("GoogleDriveClient.listFiles — Mapping", () => {
   });
 
   it("folgt nextPageToken innerhalb eines Ordners und sammelt alle Dateien", async () => {
-    // Arrange: Wurzelordner liefert zwei Seiten, keine Unterordner.
+    // Arrange: root folder returns two pages, no subfolders.
     const c = client();
     mockedRequestUrl
       .mockResolvedValueOnce(
@@ -143,7 +143,7 @@ describe("GoogleDriveClient.listFiles — Mapping", () => {
   });
 
   it("steigt rekursiv in Unterordner ab und baut den relativen Pfad auf", async () => {
-    // Arrange: root enthält Ordner 'sub' + Datei 'top.md'; 'sub' enthält 'inner.md'.
+    // Arrange: root contains folder 'sub' + file 'top.md'; 'sub' contains 'inner.md'.
     const c = client();
     mockedRequestUrl
       .mockResolvedValueOnce(
@@ -163,12 +163,12 @@ describe("GoogleDriveClient.listFiles — Mapping", () => {
     // Act
     const { files, folders } = await c.listFiles("root");
 
-    // Assert: Ordner selbst nicht als Datei; verschachtelte Datei mit Prefix.
+    // Assert: folder itself not treated as a file; nested file with prefix.
     const byId = new Map(files.map((f) => [f.id, f.relativePath]));
     expect(byId.get("top")).toBe("top.md");
     expect(byId.get("inner")).toBe("sub/inner.md");
     expect(files.find((f) => f.id === "sub-id")).toBeUndefined();
-    // Der Unterordner erscheint jetzt in folders mit relativem Pfad.
+    // The subfolder now appears in folders with a relative path.
     expect(folders).toEqual([{ id: "sub-id", relativePath: "sub" }]);
   });
 
@@ -272,8 +272,8 @@ describe("GoogleDriveClient.searchFolders — Query-Bau", () => {
     // Act
     await c.searchFolders("O'Brien");
 
-    // Assert: der escapte Begriff steht in der Query. URLSearchParams kodiert
-    // Leerzeichen als '+', daher vor dem Vergleich '+' -> ' ' zurückwandeln.
+    // Assert: the escaped term appears in the query. URLSearchParams encodes
+    // spaces as '+', so convert '+' -> ' ' back before comparing.
     const calledUrl = mockedRequestUrl.mock.calls[0][0].url as string;
     const decoded = decodeURIComponent(calledUrl).replace(/\+/g, " ");
     expect(decoded).toContain("name contains 'O\\'Brien'");
@@ -288,11 +288,11 @@ describe("GoogleDriveClient.searchFolders — Query-Bau", () => {
       text: "",
     } as unknown);
 
-    // Act: Begriff mit Backslash und Hochkomma.
+    // Act: term with backslash and single quote.
     await c.searchFolders("a\\b'c");
 
-    // Assert: Backslash -> \\ und ' -> \' (sonst bricht die Query bzw. wird
-    // ein Duplikat-Ordner angelegt, weil der bestehende nicht gefunden wird).
+    // Assert: backslash -> \\ and ' -> \' (otherwise the query breaks, or a
+    // duplicate folder gets created because the existing one isn't found).
     const calledUrl = mockedRequestUrl.mock.calls[0][0].url as string;
     const decoded = decodeURIComponent(calledUrl).replace(/\+/g, " ");
     expect(decoded).toContain("name contains 'a\\\\b\\'c'");
@@ -321,7 +321,7 @@ describe("GoogleDriveClient.searchFolders — Query-Bau", () => {
 
 describe("GoogleDriveClient.createFile — multipart Upload", () => {
   it("lädt eine Datei ohne Unterordner direkt in den Wurzelordner (nur ein Request)", async () => {
-    // Arrange: Pfad ohne '/' -> kein ensureFolderPath-Lookup, nur der Upload.
+    // Arrange: path without '/' -> no ensureFolderPath lookup, just the upload.
     const c = client();
     mockedRequestUrl.mockResolvedValue({
       status: 200,
@@ -338,7 +338,7 @@ describe("GoogleDriveClient.createFile — multipart Upload", () => {
     // Act
     const result = await c.createFile("root", "flach.md", content);
 
-    // Assert: genau ein Request (der Upload), Parent = Wurzelordner.
+    // Assert: exactly one request (the upload), parent = root folder.
     expect(mockedRequestUrl).toHaveBeenCalledTimes(1);
     const call = mockedRequestUrl.mock.calls[0][0];
     expect(call.method).toBe("POST");
@@ -350,19 +350,19 @@ describe("GoogleDriveClient.createFile — multipart Upload", () => {
   });
 
   it("legt für einen Unterordner-Pfad fehlende Ordner an und lädt dann in den Ordner hoch", async () => {
-    // Arrange: Pfad "sub/flach.md". ensureFolderPath sucht 'sub' (nicht gefunden),
-    // legt 'sub' an, dann Upload mit parents=[sub-Ordner-ID].
+    // Arrange: path "sub/flach.md". ensureFolderPath searches for 'sub' (not found),
+    // creates 'sub', then upload with parents=[sub-folder ID].
     const c = client();
     mockedRequestUrl
-      // 1) Ordnersuche nach 'sub' -> leer (nicht vorhanden)
+      // 1) folder search for 'sub' -> empty (not present)
       .mockResolvedValueOnce({ status: 200, json: { files: [] }, text: "" } as unknown)
-      // 2) Ordner 'sub' anlegen -> ID zurück
+      // 2) create folder 'sub' -> returns ID
       .mockResolvedValueOnce({
         status: 200,
         json: { id: "sub-folder-id", name: "sub" },
         text: "",
       } as unknown)
-      // 3) Datei-Upload
+      // 3) file upload
       .mockResolvedValueOnce({
         status: 200,
         json: { id: "file-id", name: "flach.md", mimeType: "text/markdown" },
@@ -373,7 +373,7 @@ describe("GoogleDriveClient.createFile — multipart Upload", () => {
     // Act
     const result = await c.createFile("root", "sub/flach.md", content);
 
-    // Assert: drei Requests, Upload landet unter dem neuen Ordner.
+    // Assert: three requests, upload ends up under the new folder.
     expect(mockedRequestUrl).toHaveBeenCalledTimes(3);
     const uploadBody = new TextDecoder().decode(
       mockedRequestUrl.mock.calls[2][0].body as ArrayBuffer
@@ -386,7 +386,7 @@ describe("GoogleDriveClient.createFile — multipart Upload", () => {
   it("nutzt den Ordner-Cache und sucht denselben Ordner beim zweiten Upload nicht erneut", async () => {
     // Arrange
     const c = client();
-    // Erster Upload: Ordner 'sub' finden (vorhanden) + Upload.
+    // First upload: find folder 'sub' (present) + upload.
     mockedRequestUrl
       .mockResolvedValueOnce({
         status: 200,
@@ -398,7 +398,7 @@ describe("GoogleDriveClient.createFile — multipart Upload", () => {
         json: { id: "f1", name: "a.md", mimeType: "t" },
         text: "",
       } as unknown)
-      // Zweiter Upload: KEINE Ordnersuche mehr (Cache), nur Upload.
+      // Second upload: NO more folder search (cache), just upload.
       .mockResolvedValueOnce({
         status: 200,
         json: { id: "f2", name: "b.md", mimeType: "t" },
@@ -410,7 +410,7 @@ describe("GoogleDriveClient.createFile — multipart Upload", () => {
     await c.createFile("root", "sub/a.md", content);
     await c.createFile("root", "sub/b.md", content);
 
-    // Assert: 2 (erster: Suche+Upload) + 1 (zweiter: nur Upload) = 3 Requests.
+    // Assert: 2 (first: search+upload) + 1 (second: upload only) = 3 requests.
     expect(mockedRequestUrl).toHaveBeenCalledTimes(3);
   });
 });

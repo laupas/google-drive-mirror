@@ -9,13 +9,13 @@ const GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 
 /**
- * Verwaltet den OAuth-2.0-Flow gegen Google für eine vom Nutzer selbst
- * angelegte Cloud-App ("Desktop"/Loopback-Flow).
+ * Manages the OAuth 2.0 flow against Google for a Cloud app created by the
+ * user themselves ("Desktop"/loopback flow).
  *
- * - Erstanmeldung: openLogin() startet einen lokalen HTTP-Server auf 127.0.0.1,
- *   öffnet die Google-Consent-Seite und fängt den Redirect mit dem Auth-Code ab.
- * - Danach: getAccessToken() tauscht den gespeicherten Refresh-Token
- *   gegen einen kurzlebigen Access-Token (mit In-Memory-Cache).
+ * - First sign-in: openLogin() starts a local HTTP server on 127.0.0.1,
+ *   opens the Google consent page and catches the redirect with the auth code.
+ * - Afterwards: getAccessToken() exchanges the stored refresh token
+ *   for a short-lived access token (with in-memory cache).
  */
 export class OAuthManager {
   private settings: PluginSettings;
@@ -26,7 +26,7 @@ export class OAuthManager {
     this.settings = settings;
   }
 
-  /** Ist genug konfiguriert, um Tokens zu holen? */
+  /** Is enough configured to fetch tokens? */
   isConfigured(): boolean {
     return Boolean(
       this.settings.clientId &&
@@ -36,11 +36,11 @@ export class OAuthManager {
   }
 
   /**
-   * Startet den interaktiven Login. Öffnet den Browser und wartet auf den
-   * Redirect. Speichert den Refresh-Token in den Settings (Aufrufer muss
-   * anschließend saveSettings() aufrufen).
+   * Starts the interactive login. Opens the browser and waits for the
+   * redirect. Stores the refresh token in the settings (the caller must
+   * subsequently call saveSettings()).
    *
-   * @returns E-Mail des angemeldeten Kontos (best effort) oder null.
+   * @returns email of the signed-in account (best effort) or null.
    */
   async openLogin(openBrowser: (url: string) => void): Promise<void> {
     if (!this.settings.clientId || !this.settings.clientSecret) {
@@ -70,21 +70,21 @@ export class OAuthManager {
   }
 
   /**
-   * Liefert einen gültigen Access-Token; erneuert bei Bedarf über den
-   * Refresh-Token. Wirft, wenn nicht konfiguriert.
+   * Returns a valid access token; renews it via the refresh token when
+   * needed. Throws if not configured.
    */
   async getAccessToken(): Promise<string> {
     if (!this.isConfigured()) {
       throw new Error(t("oauthNotSignedIn"));
     }
-    // Cache mit 60s Sicherheitsmarge.
+    // Cache with a 60s safety margin.
     if (this.cachedAccessToken && Date.now() < this.cachedTokenExpiryMs) {
       return this.cachedAccessToken;
     }
     return this.refreshAccessToken();
   }
 
-  /** Erzwingt eine Token-Erneuerung. */
+  /** Forces a token renewal. */
   private async refreshAccessToken(): Promise<string> {
     const body = new URLSearchParams({
       client_id: this.settings.clientId,
@@ -113,7 +113,7 @@ export class OAuthManager {
     return this.cachedAccessToken;
   }
 
-  /** Löscht Tokens (Logout). */
+  /** Clears tokens (logout). */
   reset(): void {
     this.settings.refreshToken = "";
     this.cachedAccessToken = null;
@@ -121,8 +121,8 @@ export class OAuthManager {
   }
 
   /**
-   * Startet einen einmaligen lokalen HTTP-Server, baut die Consent-URL,
-   * öffnet den Browser und resolved sobald Google auf 127.0.0.1 redirected.
+   * Starts a one-shot local HTTP server, builds the consent URL,
+   * opens the browser and resolves as soon as Google redirects to 127.0.0.1.
    */
   private awaitAuthCode(
     openBrowser: (url: string) => void
@@ -130,15 +130,15 @@ export class OAuthManager {
     return new Promise((resolve, reject) => {
       const state = randomToken();
       let settled = false;
-      // Wird in server.listen() gesetzt und im Callback wiederverwendet,
-      // damit Consent- und Token-Austausch-redirect_uri exakt übereinstimmen.
+      // Set in server.listen() and reused in the callback, so that the
+      // consent and token-exchange redirect_uri match exactly.
       let redirectUri = "";
 
       const server = http.createServer((req, res) => {
         try {
           const reqUrl = new URL(req.url ?? "", "http://127.0.0.1");
           log.info("HTTP-Request auf Loopback:", reqUrl.pathname);
-          // Browser fragt oft /favicon.ico an -> ignorieren, nicht als Fehler werten.
+          // The browser often requests /favicon.ico -> ignore it, don't treat it as an error.
           if (reqUrl.pathname !== "/callback") {
             res.writeHead(404).end();
             return;
@@ -158,7 +158,7 @@ export class OAuthManager {
 
           if (settled) return;
           settled = true;
-          // Server erst schließen, wenn die Response rausgeschrieben ist.
+          // Only close the server once the response has been written out.
           res.on("finish", () => server.close());
 
           if (error) return reject(new Error(t("oauthError", { error })));
@@ -166,8 +166,8 @@ export class OAuthManager {
           if (returnedState !== state)
             return reject(new Error(t("oauthStateMismatch")));
 
-          // WICHTIG: exakt dieselbe redirect_uri wie beim Consent verwenden,
-          // sonst lehnt Google den Token-Austausch mit redirect_uri_mismatch ab.
+          // IMPORTANT: use exactly the same redirect_uri as during consent,
+          // otherwise Google rejects the token exchange with redirect_uri_mismatch.
           resolve({ code, redirectUri });
         } catch (e) {
           if (!settled) {
@@ -185,7 +185,7 @@ export class OAuthManager {
         }
       });
 
-      // Port 0 = beliebiger freier Port.
+      // Port 0 = any free port.
       server.listen(0, "127.0.0.1", () => {
         const addr = server.address() as AddressInfo;
         redirectUri = `http://127.0.0.1:${addr.port}/callback`;
@@ -199,13 +199,13 @@ export class OAuthManager {
             response_type: "code",
             scope: OAUTH_SCOPE,
             access_type: "offline",
-            prompt: "consent", // erzwingt Refresh-Token auch bei erneutem Login
+            prompt: "consent", // forces a refresh token even on repeated login
             state,
           }).toString();
         openBrowser(authUrl);
       });
 
-      // Timeout nach 5 Minuten.
+      // Timeout after 5 minutes.
       setTimeout(() => {
         if (!settled) {
           settled = true;
@@ -255,7 +255,7 @@ interface TokenResponse {
 }
 
 function randomToken(): string {
-  // Kein Krypto-Bedarf hier über CSRF-State hinaus; einfache, ausreichende Entropie.
+  // No crypto need here beyond the CSRF state; simple, sufficient entropy.
   let s = "";
   for (let i = 0; i < 4; i++) {
     s += Math.floor((1 + Math.random()) * 0x100000000)

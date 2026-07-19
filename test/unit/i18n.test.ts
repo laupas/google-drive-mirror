@@ -1,6 +1,6 @@
 /**
- * Unit-Tests für das i18n-Modul: Spracherkennung (defensiv, Node-tauglich),
- * Interpolation, Fallback-Kette und Locale-Konsistenz.
+ * Unit tests for the i18n module: language detection (defensive, Node-safe),
+ * interpolation, fallback chain and locale consistency.
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -18,14 +18,14 @@ import { it as itLocale } from "../../src/i18n/locales/it";
 import { fr } from "../../src/i18n/locales/fr";
 
 afterEach(() => {
-  // Aktive Sprache zurücksetzen und ein evtl. gesetztes window entfernen.
+  // Reset the active language and remove any window that may have been set.
   setLocale("en");
   vi.unstubAllGlobals();
 });
 
 describe("detectLocale", () => {
   it("fällt auf 'en' zurück, wenn kein window vorhanden ist (Testumgebung)", () => {
-    // In der Node-Umgebung existiert kein window -> try/catch greift.
+    // In the Node environment no window exists -> try/catch kicks in.
     expect(detectLocale()).toBe("en");
   });
 
@@ -97,15 +97,15 @@ describe("t()", () => {
 
   it("lässt unbekannte Platzhalter unverändert stehen", () => {
     setLocale("en");
-    // {path} wird nicht geliefert -> bleibt als Literal erhalten.
+    // {path} is not supplied -> stays as a literal.
     expect(t("uploadAction", {})).toBe("Upload “{path}”");
   });
 
   it("fällt bei fehlendem Schlüssel in der aktiven Sprache auf Englisch zurück", () => {
-    // Ein Schlüssel, den IT nicht überschreibt, existiert so nicht — daher
-    // ein realer Test: setze eine Sprache, deren Partial diesen Key auslässt.
-    // Alle Locales sind vollständig gefüllt; simuliere Lücke über einen Key,
-    // den wir bewusst prüfen: 'conflictWinnerRemote' ist überall "Drive".
+    // A key that IT doesn't override doesn't exist as such — hence
+    // a real test: pick a language whose Partial omits this key.
+    // All locales are fully populated; simulate a gap via a key
+    // that we deliberately check: 'conflictWinnerRemote' is "Drive" everywhere.
     setLocale("fr");
     expect(t("conflictWinnerRemote")).toBe("Drive");
   });
@@ -133,8 +133,8 @@ describe("Locale-Konsistenz", () => {
   }
 
   it("jede Übersetzung, die einen {placeholder} nutzt, behält ihn (kein Verlust bei Übersetzung)", () => {
-    // Für jeden Key, der in EN Platzhalter hat, müssen die anderen Sprachen
-    // dieselben Platzhalter enthalten (sonst geht z.B. der Pfad verloren).
+    // For every key that has placeholders in EN, the other languages must
+    // contain the same placeholders (otherwise e.g. the path gets lost).
     const placeholderRe = /\{(\w+)\}/g;
     const enPlaceholders = (v: string) =>
       new Set([...v.matchAll(placeholderRe)].map((m) => m[1]));

@@ -1,7 +1,7 @@
 /**
- * In-Memory-Fake für GoogleDriveClient. Hält einen Remote-Store und zeichnet
- * Aufrufe auf, damit Integrationstests prüfen können, welche Drive-Operationen
- * die SyncEngine ausgelöst hat — ohne echte HTTP-Requests.
+ * In-memory fake for GoogleDriveClient. Holds a remote store and records
+ * calls, so integration tests can verify which Drive operations the
+ * SyncEngine triggered — without real HTTP requests.
  */
 
 import { GoogleDriveClient } from "../../src/drive-client";
@@ -28,17 +28,17 @@ export class FakeDriveClient {
     trashFolder: [] as string[],
   };
 
-  /** In-Memory-Ordner (relativer Pfad -> Drive-Ordner-ID). */
+  /** In-memory folders (relative path -> Drive folder ID). */
   private folders = new Map<string, string>();
 
   /**
-   * Zusätzliche Ordner-Listing-Einträge, die `listFiles` roh mit ausliefert
-   * (für Kollisionstests: mehrere Ordner mit gleichem relativePath). Nicht Teil
-   * des `folders`-Map, damit sich gleiche Pfade nicht überschreiben.
+   * Additional folder-listing entries that `listFiles` returns raw
+   * (for collision tests: multiple folders with the same relativePath). Not part
+   * of the `folders` map, so identical paths don't overwrite each other.
    */
   public extraFolderListings: DriveFolder[] = [];
 
-  /** Test-Setup: Remote-Datei mit obsidianPath, Inhalt und Metadaten anlegen. */
+  /** Test setup: create a remote file with obsidianPath, content and metadata. */
   seed(opts: {
     path: string;
     content: string;
@@ -58,29 +58,29 @@ export class FakeDriveClient {
       size: toBuf(opts.content).byteLength,
       trashed: opts.trashed ?? false,
       content: toBuf(opts.content),
-      // obsidianPath wird über pathOf zurückgegeben.
+      // obsidianPath is returned via pathOf.
       parents: ["root"],
     });
-    // Pfad im internen Feld ablegen (pathOf nutzt appProperties -> hier separat).
+    // Store the path in the internal field (pathOf uses appProperties -> separate here).
     (this.store.get(id) as RemoteEntry & { __path: string }).__path = opts.path;
     return id;
   }
 
-  // --- GoogleDriveClient-Oberfläche (nur was die Engine nutzt) ---
+  // --- GoogleDriveClient surface (only what the engine uses) ---
 
   pathOf(f: DriveFile): string {
     return f.relativePath ?? f.name;
   }
 
-  /** Pro Lauf aufgerufen; im Fake ein No-Op (kein echter Ordner-Cache). */
+  /** Called once per run; a no-op in the fake (no real folder cache). */
   clearFolderCache(): void {}
 
   async listFiles(
     _rootFolderId: string,
     _driveId?: string
   ): Promise<{ files: DriveFile[]; folders: DriveFolder[] }> {
-    // Der echte Client liefert getrashte Dateien nicht mehr aus (Filter beim
-    // rekursiven Listing); der Fake bildet das nach.
+    // The real client no longer returns trashed files (filtered during the
+    // recursive listing); the fake mirrors that.
     const files = [...this.store.values()]
       .filter((e) => !e.trashed)
       .map((e) => ({
@@ -162,7 +162,7 @@ export class FakeDriveClient {
     if (e) e.trashed = true;
   }
 
-  /** Legt einen (leeren) Ordner an und liefert seine Drive-ID. */
+  /** Creates an (empty) folder and returns its Drive ID. */
   async createFolderPath(
     _rootFolderId: string,
     path: string,
@@ -196,7 +196,7 @@ export class FakeDriveClient {
     };
   }
 
-  /** Als GoogleDriveClient verwendbar machen (Struktur-Typ). */
+  /** Make usable as a GoogleDriveClient (structural type). */
   asClient(): GoogleDriveClient {
     return this as unknown as GoogleDriveClient;
   }

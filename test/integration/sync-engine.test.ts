@@ -1,12 +1,12 @@
 /**
- * Integrationstests für SyncEngine.sync() — das Zusammenspiel von
- * collectLocal() (Hash-Erhebung), Drive-Listing, reconcile() und
- * applyAction() gegen einen In-Memory-Vault und einen Fake-Drive-Client.
+ * Integration tests for SyncEngine.sync() — the interplay of
+ * collectLocal() (hash collection), Drive listing, reconcile() and
+ * applyAction() against an in-memory vault and a fake Drive client.
  *
- * Diese Tests prüfen beobachtbares Verhalten über die öffentliche sync()-API:
- * Welche Drive-Operationen laufen, wie ändert sich der Vault, was steht danach
- * in der Sync-Base. Damit sind auch die (privaten) Filter extensionAllowed /
- * isGoogleAppsFile / inScope indirekt abgedeckt.
+ * These tests verify observable behavior via the public sync() API:
+ * which Drive operations run, how the vault changes, what ends up afterward
+ * in the sync base. This also indirectly covers the (private) filters
+ * extensionAllowed / isGoogleAppsFile / inScope.
  *
  * Format: AAA.
  */
@@ -25,13 +25,13 @@ import { FakeDriveClient } from "../helpers/fake-drive";
 import { FakeStorage } from "../helpers/fake-storage";
 import { md5Hex } from "../helpers/md5";
 
-/** Optionen für setup(): Settings + eine vorbelegte Sync-Base. */
+/** Options for setup(): settings + a pre-populated sync base. */
 interface SetupOptions extends Partial<PluginSettings> {
-  /** Vorbelegte Base-Einträge (früher settings.syncState). */
+  /** Pre-populated base entries (formerly settings.syncState). */
   syncState?: Record<string, SyncStateEntry>;
 }
 
-/** Baut Engine + Fakes; gibt alle Teile für Arrange/Assert zurück. */
+/** Builds engine + fakes; returns all parts for arrange/assert. */
 function setup(opts: SetupOptions = {}) {
   const { syncState, ...settingsOverrides } = opts;
   const settings: PluginSettings = {
@@ -43,11 +43,11 @@ function setup(opts: SetupOptions = {}) {
   const drive = new FakeDriveClient();
   const storage = new FakeStorage();
   const store = new SyncStateStore(storage.asStorage(), () => "test-scope");
-  // Vorbelegte Base direkt in den Store legen.
+  // Put the pre-populated base directly into the store.
   if (syncState) {
     for (const entry of Object.values(syncState)) store.set(entry);
   }
-  const status = new SyncStatus(); // echte, UI-freie Status-/Log-Instanz
+  const status = new SyncStatus(); // real, UI-free status/log instance
   const engine = new SyncEngine(
     vault as never,
     drive.asClient(),
@@ -80,13 +80,13 @@ describe("SyncEngine.sync — Vorbedingungen", () => {
     const { engine, vault } = setup();
     vault.seed("a.md", "inhalt");
 
-    // Act: zwei Läufe gleichzeitig starten.
+    // Act: start two runs at the same time.
     const [first, second] = await Promise.all([
       engine.sync(false),
       engine.sync(false),
     ]);
 
-    // Assert: genau einer läuft, der andere wird übersprungen.
+    // Assert: exactly one runs, the other is skipped.
     const results = [first, second];
     expect(results.filter((r) => r === null)).toHaveLength(1);
     expect(results.filter((r) => r !== null)).toHaveLength(1);
@@ -140,7 +140,7 @@ describe("SyncEngine.sync — Google-Apps-Dateien werden gefiltert", () => {
     // Act
     const summary = await engine.sync(false);
 
-    // Assert: kein Download, keine lokale Datei.
+    // Assert: no download, no local file.
     expect(summary?.downloaded).toBe(0);
     expect(drive.calls.downloadFile).toEqual([]);
     expect(vault.has("doc")).toBe(false);
@@ -191,7 +191,7 @@ describe("SyncEngine.sync — Ignore-Muster (Blacklist)", () => {
     // Act
     const summary = await engine.sync(false);
 
-    // Assert: nur die nicht-ignorierte Datei wird hochgeladen.
+    // Assert: only the non-ignored file is uploaded.
     expect(summary?.uploaded).toBe(1);
     expect(drive.calls.createFile).toEqual([{ path: "keep.md" }]);
   });
@@ -212,9 +212,9 @@ describe("SyncEngine.sync — Ignore-Muster (Blacklist)", () => {
   });
 
   it("LÖSCHSCHUTZ: eine ignorierte Datei mit beidseitiger Base wird auf KEINER Seite gelöscht", async () => {
-    // Arrange: Datei existiert lokal UND remote, Base bezeugt beidseitig.
-    // Würde der Ignore-Filter nur auf einer Seite greifen, sähe der Reconciler
-    // sie als „auf einer Seite gelöscht" und würde sie auf der anderen löschen.
+    // Arrange: file exists locally AND remotely, base attests both sides.
+    // If the ignore filter only applied on one side, the reconciler would see
+    // it as "deleted on one side" and would delete it on the other.
     const content = "geheim";
     const md5 = md5Hex(content);
     const { engine, vault, drive, store } = setup({
@@ -239,7 +239,7 @@ describe("SyncEngine.sync — Ignore-Muster (Blacklist)", () => {
     // Act
     const summary = await engine.sync(false);
 
-    // Assert: keine Löschung auf beiden Seiten, Datei bleibt überall erhalten.
+    // Assert: no deletion on either side, file is preserved everywhere.
     expect(summary?.deletedLocal).toBe(0);
     expect(summary?.deletedRemote).toBe(0);
     expect(drive.calls.trashFile).toEqual([]);
@@ -257,20 +257,20 @@ describe("SyncEngine.sync — Scope auf Unterordner (localFolder)", () => {
     // Act
     const summary = await engine.sync(false);
 
-    // Assert: nur die Datei im Ordner, und ihr Pfad ist relativ zum Ordner.
+    // Assert: only the file inside the folder, and its path is relative to the folder.
     expect(summary?.uploaded).toBe(1);
     expect(drive.calls.createFile).toEqual([{ path: "drin.md" }]);
   });
 
   it("schreibt einen remote Download an den korrekten absoluten Vault-Pfad (Präfix vorangestellt)", async () => {
-    // Arrange: Remote-Pfad ist sync-relativ (so wie beim Upload gespeichert).
+    // Arrange: remote path is sync-relative (as stored on upload).
     const { engine, vault, drive } = setup({ localFolder: "sync" });
     drive.seed({ path: "drin.md", content: "runtergeladen", md5: "r1" });
 
     // Act
     await engine.sync(false);
 
-    // Assert: landet unter sync/drin.md im Vault.
+    // Assert: ends up under sync/drin.md in the vault.
     expect(vault.has("sync/drin.md")).toBe(true);
     expect(vault.read("sync/drin.md")).toBe("runtergeladen");
   });
@@ -278,7 +278,7 @@ describe("SyncEngine.sync — Scope auf Unterordner (localFolder)", () => {
 
 describe("SyncEngine.sync — Löschung remote propagieren", () => {
   it("löscht lokal, wenn die Datei remote gelöscht wurde und lokal unverändert ist", async () => {
-    // Arrange: Base kennt die Datei, lokal noch da, remote weg.
+    // Arrange: base knows the file, still there locally, gone remotely.
     const md5 = md5Hex("stabiler inhalt");
     const { engine, vault, store } = setup({
       syncState: {
@@ -296,7 +296,7 @@ describe("SyncEngine.sync — Löschung remote propagieren", () => {
       },
     });
     vault.seed("x.md", "stabiler inhalt");
-    // Drive leer -> remote gelöscht.
+    // Drive empty -> deleted remotely.
 
     // Act
     const summary = await engine.sync(false);
@@ -310,7 +310,7 @@ describe("SyncEngine.sync — Löschung remote propagieren", () => {
 
 describe("SyncEngine.sync — Do not delete in Google Drive (neverDeleteRemote)", () => {
   it("behält die Drive-Datei bei lokaler Löschung und setzt Base auf nur-remote", async () => {
-    // Arrange: Datei war beidseitig, lokal jetzt weg, remote unverändert.
+    // Arrange: file was on both sides, now gone locally, unchanged remotely.
     const content = "bleibt in drive";
     const md5 = md5Hex(content);
     const { engine, drive, store } = setup({
@@ -329,13 +329,13 @@ describe("SyncEngine.sync — Do not delete in Google Drive (neverDeleteRemote)"
         },
       },
     });
-    // Lokal fehlt die Datei; in Drive ist sie noch da.
+    // File is missing locally; still present in Drive.
     drive.seed({ path: "keep.md", content, md5, id: "d-keep" });
 
     // Act
     const summary = await engine.sync(false);
 
-    // Assert: KEINE Drive-Löschung; Base auf nur-remote mit keptRemoteOnly.
+    // Assert: NO Drive deletion; base set to remote-only with keptRemoteOnly.
     expect(drive.calls.trashFile).toEqual([]);
     expect(summary?.deletedRemote).toBe(0);
     const entry = store.get("keep.md");
@@ -347,7 +347,7 @@ describe("SyncEngine.sync — Do not delete in Google Drive (neverDeleteRemote)"
   });
 
   it("holt eine nur-remote-Datei NICHT als Zombie zurück (local=false verhindert Download)", async () => {
-    // Arrange: Base sagt local=false, remote=true; Datei in Drive vorhanden.
+    // Arrange: base says local=false, remote=true; file present in Drive.
     const content = "nur remote";
     const md5 = md5Hex(content);
     const { engine, vault, drive } = setup({
@@ -372,7 +372,7 @@ describe("SyncEngine.sync — Do not delete in Google Drive (neverDeleteRemote)"
     // Act
     const summary = await engine.sync(false);
 
-    // Assert: kein Download, Datei bleibt lokal abwesend.
+    // Assert: no download, file stays absent locally.
     expect(summary?.downloaded).toBe(0);
     expect(drive.calls.downloadFile).toEqual([]);
     expect(vault.has("keep.md")).toBe(false);
@@ -384,7 +384,7 @@ describe("SyncEngine.sync — Fehler werden gesammelt, nicht geworfen", () => {
     // Arrange
     const { engine, drive } = setup();
     drive.seed({ path: "kaputt.md", content: "x", md5: "r1", id: "d-boom" });
-    vi.spyOn(drive, "downloadFile").mockRejectedValue(new Error("Netzwerk weg"));
+    vi.spyOn(drive, "downloadFile").mockRejectedValue(new Error("Netzwerk weg")); // "network gone"
 
     // Act
     const summary = await engine.sync(false);
@@ -437,29 +437,29 @@ describe("SyncEngine.sync — keine Änderungen", () => {
 
 describe("SyncEngine.sync — Checkpoint-Speichern bei großen Läufen", () => {
   it("speichert den State alle 50 Aktionen zwischen (plus einmal am Ende)", async () => {
-    // Arrange: 120 neue lokale Dateien -> 120 Uploads.
+    // Arrange: 120 new local files -> 120 uploads.
     const { engine, vault, storage } = setup();
     for (let i = 0; i < 120; i++) vault.seed(`f${i}.md`, `inhalt-${i}`);
 
     // Act
     const summary = await engine.sync(false);
 
-    // Assert: 120 Uploads, und sync-state.json wurde 3× geschrieben
-    // (Checkpoint nach 50 und 100, plus finaler Save am Laufende).
+    // Assert: 120 uploads, and sync-state.json was written 3 times
+    // (checkpoint after 50 and 100, plus final save at end of run).
     expect(summary?.uploaded).toBe(120);
     expect(storage.writeCount("sync-state.json")).toBe(3);
   });
 
   it("ein Checkpoint enthält bereits die abgeschlossenen Übertragungen", async () => {
-    // Arrange: genau 50 Uploads -> genau 1 Checkpoint (+ finaler Save).
+    // Arrange: exactly 50 uploads -> exactly 1 checkpoint (+ final save).
     const { engine, vault, storage } = setup();
     for (let i = 0; i < 50; i++) vault.seed(`g${i}.md`, `x${i}`);
 
     // Act
     await engine.sync(false);
 
-    // Assert: nach 50 Aktionen 1 Checkpoint + 1 finaler Save = 2 Writes; der
-    // persistierte State enthält alle 50 Einträge (local & remote true).
+    // Assert: after 50 actions, 1 checkpoint + 1 final save = 2 writes; the
+    // persisted state contains all 50 entries (local & remote true).
     expect(storage.writeCount("sync-state.json")).toBe(2);
     const persisted = storage.peek("sync-state.json") as {
       entries: Record<string, { local: boolean; remote: boolean }>;
@@ -471,7 +471,7 @@ describe("SyncEngine.sync — Checkpoint-Speichern bei großen Läufen", () => {
 
 describe("SyncEngine.sync — Pfad-Kollision: doppelte Drive-Dateinamen", () => {
   it("überspringt den Pfad komplett, wenn zwei Drive-Dateien mit gleichem Pfad UNTERSCHIEDLICHEN Inhalt haben", async () => {
-    // Arrange: zwei Drive-Dateien, gleicher Pfad, verschiedene md5.
+    // Arrange: two Drive files, same path, different md5.
     const { engine, drive, vault, store } = setup();
     drive.seed({ path: "dup.md", content: "version A", md5: "hA", id: "d-A" });
     drive.seed({ path: "dup.md", content: "version B", md5: "hB", id: "d-B" });
@@ -479,7 +479,7 @@ describe("SyncEngine.sync — Pfad-Kollision: doppelte Drive-Dateinamen", () => 
     // Act
     const summary = await engine.sync(false);
 
-    // Assert: nichts heruntergeladen, keine Base, ein Fehler gemeldet.
+    // Assert: nothing downloaded, no base, one error reported.
     expect(drive.calls.downloadFile).toEqual([]);
     expect(vault.has("dup.md")).toBe(false);
     expect(store.get("dup.md")).toBeUndefined();
@@ -487,7 +487,7 @@ describe("SyncEngine.sync — Pfad-Kollision: doppelte Drive-Dateinamen", () => 
   });
 
   it("wählt bei INHALTSGLEICHEN Duplikaten (gleicher md5) deterministisch eine und synct normal", async () => {
-    // Arrange: zwei Drive-Dateien, gleicher Pfad, gleicher md5.
+    // Arrange: two Drive files, same path, same md5.
     const { engine, drive, vault } = setup();
     drive.seed({ path: "dup.md", content: "same", md5: "hSame", id: "d-2" });
     drive.seed({ path: "dup.md", content: "same", md5: "hSame", id: "d-1" });
@@ -495,7 +495,7 @@ describe("SyncEngine.sync — Pfad-Kollision: doppelte Drive-Dateinamen", () => 
     // Act
     const summary = await engine.sync(false);
 
-    // Assert: genau ein Download (die kleinste ID "d-1"), kein Fehler.
+    // Assert: exactly one download (the smallest ID "d-1"), no error.
     expect(summary?.downloaded).toBe(1);
     expect(drive.calls.downloadFile).toEqual(["d-1"]);
     expect(vault.read("dup.md")).toBe("same");
@@ -505,16 +505,17 @@ describe("SyncEngine.sync — Pfad-Kollision: doppelte Drive-Dateinamen", () => 
 
 describe("SyncEngine.sync — Schutz vor Remote-Teilbaum-Verlust", () => {
   it("löscht einen Drive-Ordner NICHT, wenn er noch Drive-Dateien enthält (auch wenn er lokal fehlt)", async () => {
-    // Arrange: Drive hat Ordner "sub" mit einer Datei "sub/keep.md". Die Base
-    // sagt: "sub" war zuletzt lokal+remote da. Lokal fehlt "sub" nun komplett
-    // (z.B. transienter Ordner-Enumerierungs-Aussetzer). Ohne Schutz würde
-    // reconcileFolders deleteRemoteFolder("sub") -> trasht den ganzen Teilbaum.
+    // Arrange: Drive has folder "sub" with a file "sub/keep.md". The base
+    // says: "sub" was last present locally+remotely. Locally "sub" is now
+    // completely missing (e.g. transient folder-enumeration hiccup). Without
+    // protection reconcileFolders would deleteRemoteFolder("sub") -> trashes
+    // the whole subtree.
     const { engine, drive, store } = setup();
     const subId = await drive.createFolderPath("root", "sub");
-    // Datei liegt remote unter sub/ und existiert auch lokal nicht -> bleibt
-    // remote (Base kennt sie nicht -> gilt als Neuzugang -> Download, kein Delete).
+    // File lives remotely under sub/ and also doesn't exist locally -> stays
+    // remote (base doesn't know it -> counts as new addition -> download, no delete).
     drive.seed({ path: "sub/keep.md", content: "wichtig", md5: "k1", id: "d-keep" });
-    // Ordner-Base: sub war lokal+remote vorhanden.
+    // Folder base: sub was present locally+remotely.
     store.set({
       path: "sub",
       local: true,
@@ -530,8 +531,8 @@ describe("SyncEngine.sync — Schutz vor Remote-Teilbaum-Verlust", () => {
     // Act
     const summary = await engine.sync(false);
 
-    // Assert: KEIN trashFolder; stattdessen ein Fehler/Hinweis, dass der Ordner
-    // noch Dateien enthält.
+    // Assert: NO trashFolder; instead an error/notice that the folder
+    // still contains files.
     expect(drive.calls.trashFolder).toEqual([]);
     expect(
       summary?.errors.some((e) => e.includes("sub") && e.includes("files"))

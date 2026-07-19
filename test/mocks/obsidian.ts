@@ -1,21 +1,21 @@
 /**
- * Test-Mock für das `obsidian`-Modul.
+ * Test mock for the `obsidian` module.
  *
- * Das echte `obsidian`-Paket liefert nur Typdeklarationen (keine Runtime-JS),
- * daher wird dieser Mock in vitest.config.ts als Alias für `obsidian` verwendet.
- * Er stellt genau die Runtime-Symbole bereit, die der Plugin-Code importiert:
- *   - `normalizePath` (Pfad-Normalisierung, hier vereinfacht)
- *   - `requestUrl`    (HTTP; in Tests via vi.fn() ersetzt)
- *   - `Notice`        (UI-Benachrichtigung; No-Op)
- *   - `TFile`, `Vault` (Klassen, die für `instanceof`-Prüfungen ausreichen)
+ * The real `obsidian` package only ships type declarations (no runtime JS),
+ * so this mock is used as an alias for `obsidian` in vitest.config.ts.
+ * It provides exactly the runtime symbols the plugin code imports:
+ *   - `normalizePath` (path normalization, simplified here)
+ *   - `requestUrl`    (HTTP; replaced via vi.fn() in tests)
+ *   - `Notice`        (UI notification; no-op)
+ *   - `TFile`, `Vault` (classes sufficient for `instanceof` checks)
  */
 
 import { vi } from "vitest";
 
 /**
- * Vereinfachte Nachbildung von Obsidians normalizePath: kollabiert
- * Backslashes/Mehrfach-Slashes und entfernt führende/abschließende Slashes.
- * Reicht für die Pfadlogik der Sync-Engine im Test.
+ * Simplified replica of Obsidian's normalizePath: collapses
+ * backslashes/multiple slashes and removes leading/trailing slashes.
+ * Sufficient for the sync engine's path logic in tests.
  */
 export function normalizePath(path: string): string {
   return path
@@ -25,10 +25,10 @@ export function normalizePath(path: string): string {
     .replace(/\/+$/, "");
 }
 
-/** In Tests via vi.mocked(requestUrl) gesteuert. */
+/** Controlled in tests via vi.mocked(requestUrl). */
 export const requestUrl = vi.fn();
 
-/** UI-Notice — im Test ein No-Op, aber konstruierbar. */
+/** UI notice — a no-op in tests, but constructible. */
 export class Notice {
   constructor(public message: string, public timeout?: number) {}
   setMessage(_message: string): this {
@@ -37,19 +37,19 @@ export class Notice {
   hide(): void {}
 }
 
-/** Basisklasse für abstrakte Vault-Dateien (nur für instanceof nötig). */
+/** Base class for abstract vault files (only needed for instanceof). */
 export class TAbstractFile {
   path = "";
 }
 
-/** Repräsentiert eine Datei im Vault (nur für instanceof nötig). */
+/** Represents a file in the vault (only needed for instanceof). */
 export class TFile extends TAbstractFile {
   stat = { mtime: 0, ctime: 0, size: 0 };
   basename = "";
   extension = "";
 }
 
-/** Repräsentiert einen Ordner im Vault (nur für instanceof nötig). */
+/** Represents a folder in the vault (only needed for instanceof). */
 export class TFolder extends TAbstractFile {
   children: TAbstractFile[] = [];
   isRoot(): boolean {
@@ -58,8 +58,8 @@ export class TFolder extends TAbstractFile {
 }
 
 /**
- * Vault-Oberfläche, so weit sie der Plugin-Code (sync-engine.ts) nutzt.
- * Nur zur Typprüfung; die tatsächlichen Instanzen im Test sind der FakeVault.
+ * Vault surface, as far as the plugin code (sync-engine.ts) uses it.
+ * For type checking only; the actual instances in tests are the FakeVault.
  */
 export interface DataAdapter {
   readBinary(path: string): Promise<ArrayBuffer>;
@@ -81,7 +81,7 @@ export class Vault {
   async trash(_file: TAbstractFile, _system: boolean): Promise<void> {}
 }
 
-/** AbstractInputSuggest wird von suggesters.ts erweitert (nicht getestet). */
+/** AbstractInputSuggest is extended by suggesters.ts (not tested). */
 export class AbstractInputSuggest<T> {
   constructor(_app: unknown, _input: unknown) {}
   getSuggestions(_query: string): T[] | Promise<T[]> {

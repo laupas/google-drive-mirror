@@ -1,12 +1,12 @@
 /**
- * Test-Factories: bauen valide Domänenobjekte mit sinnvollen Defaults, sodass
- * jeder Test im Arrange-Block nur die für ihn relevanten Felder überschreibt.
+ * Test factories: build valid domain objects with sensible defaults, so that
+ * each test in its arrange block only overrides the fields relevant to it.
  */
 
 import { LocalFile } from "../../src/reconciler";
 import { DriveFile, SyncStateEntry } from "../../src/types";
 
-/** Lokale Datei mit Defaults; Überschreibungen via Partial. */
+/** Local file with defaults; overrides via Partial. */
 export function localFile(overrides: Partial<LocalFile> = {}): LocalFile {
   return {
     path: "note.md",
@@ -18,13 +18,13 @@ export function localFile(overrides: Partial<LocalFile> = {}): LocalFile {
 }
 
 /**
- * Eine Drive-Datei plus vault-relativer Pfad. Der Pfad ist KEIN Feld von
- * DriveFile (den Pfad liefert im echten Code drive.pathOf / der Map-Key),
- * wird für Tests aber mitgeführt, damit mapByPath danach indizieren kann.
+ * A Drive file plus vault-relative path. The path is NOT a field of
+ * DriveFile (in real code the path comes from drive.pathOf / the map key),
+ * but is carried along for tests so mapByPath can index by it.
  */
 export type DriveFileWithPath = DriveFile & { path: string };
 
-/** Drive-Datei mit Defaults; Überschreibungen via Partial (inkl. path). */
+/** Drive file with defaults; overrides via Partial (incl. path). */
 export function driveFile(
   overrides: Partial<DriveFileWithPath> = {}
 ): DriveFileWithPath {
@@ -42,8 +42,8 @@ export function driveFile(
 }
 
 /**
- * Base-/Sync-State-Eintrag mit Defaults; Überschreibungen via Partial.
- * Default: Datei existierte zuletzt auf BEIDEN Seiten (local & remote), kein Ordner.
+ * Base/sync-state entry with defaults; overrides via Partial.
+ * Default: file last existed on BOTH sides (local & remote), not a folder.
  */
 export function baseEntry(overrides: Partial<SyncStateEntry> = {}): SyncStateEntry {
   return {
@@ -60,7 +60,7 @@ export function baseEntry(overrides: Partial<SyncStateEntry> = {}): SyncStateEnt
   };
 }
 
-/** Baut eine Map<string, T> aus Objekten mit `path`-Feld. */
+/** Builds a Map<string, T> from objects with a `path` field. */
 export function mapByPath<T extends { path: string }>(items: T[]): Map<string, T> {
   return new Map(items.map((i) => [i.path, i]));
 }
