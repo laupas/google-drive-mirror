@@ -111,7 +111,7 @@ export const en = {
   allowedExtensionsPlaceholder: "md, png, jpg, pdf",
   ignorePatternsName: "Ignore patterns",
   ignorePatternsDesc:
-    "Comma-separated list of files/folders to exclude from sync. Accepts plain extensions (“tmp”, “.log”) and glob patterns (“*.tmp”, “drafts/*”, “**/node_modules/**”). Paths are relative to the sync folder. Applies to both sides. Empty = ignore nothing.",
+    "Comma-separated list of files/folders to exclude from sync — no quotes. Accepts plain extensions (tmp, .log) and glob patterns (*.tmp, drafts/*, **/node_modules/**). Paths are relative to the sync folder. Applies to both sides. Empty = ignore nothing.",
   ignorePatternsPlaceholder: "*.tmp, .DS_Store, drafts/*",
   neverDeleteRemoteName: "Do not delete in Google Drive",
   neverDeleteRemoteDesc:

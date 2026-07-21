@@ -113,7 +113,7 @@ export const it: Partial<Messages> = {
   allowedExtensionsPlaceholder: "md, png, jpg, pdf",
   ignorePatternsName: "Motivi da ignorare",
   ignorePatternsDesc:
-    "Elenco separato da virgole di file/cartelle da escludere dalla sincronizzazione. Accetta estensioni semplici (“tmp”, “.log”) e motivi glob (“*.tmp”, “drafts/*”, “**/node_modules/**”). I percorsi sono relativi alla cartella di sincronizzazione. Vale per entrambi i lati. Vuoto = non ignorare nulla.",
+    "Elenco separato da virgole di file/cartelle da escludere dalla sincronizzazione — senza virgolette. Accetta estensioni semplici (tmp, .log) e motivi glob (*.tmp, drafts/*, **/node_modules/**). I percorsi sono relativi alla cartella di sincronizzazione. Vale per entrambi i lati. Vuoto = non ignorare nulla.",
   ignorePatternsPlaceholder: "*.tmp, .DS_Store, drafts/*",
   neverDeleteRemoteName: "Non eliminare in Google Drive",
   neverDeleteRemoteDesc:

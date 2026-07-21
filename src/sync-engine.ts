@@ -6,7 +6,7 @@ import { SyncStateStore } from "./sync-state";
 import { SyncStatus } from "./sync-status";
 import { log } from "./logger";
 import { t } from "./i18n";
-import { isIgnored, parseIgnorePatterns } from "./ignore";
+import { extensionAllowed, isIgnored, parseIgnorePatterns } from "./ignore";
 import {
   DriveFile,
   FolderAction,
@@ -885,16 +885,7 @@ export class SyncEngine {
    * everything allowed. Comparison is case-insensitive, without a leading dot.
    */
   private extensionAllowed(path: string): boolean {
-    const raw = this.active.allowedExtensions.trim();
-    if (!raw) return true;
-    const allowed = raw
-      .split(",")
-      .map((e) => e.trim().replace(/^\./, "").toLowerCase())
-      .filter((e) => e.length > 0);
-    if (allowed.length === 0) return true;
-    const dot = path.lastIndexOf(".");
-    const ext = dot === -1 ? "" : path.slice(dot + 1).toLowerCase();
-    return allowed.includes(ext);
+    return extensionAllowed(path, this.active.allowedExtensions);
   }
 
   /**

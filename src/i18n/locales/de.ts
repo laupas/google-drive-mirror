@@ -113,7 +113,7 @@ export const de: Partial<Messages> = {
   allowedExtensionsPlaceholder: "md, png, jpg, pdf",
   ignorePatternsName: "Ignorier-Muster",
   ignorePatternsDesc:
-    "Kommagetrennte Liste von Dateien/Ordnern, die vom Sync ausgeschlossen werden. Erlaubt reine Endungen („tmp“, „.log“) und Glob-Muster („*.tmp“, „drafts/*“, „**/node_modules/**“). Pfade sind relativ zum Sync-Ordner. Gilt für beide Seiten. Leer = nichts ignorieren.",
+    "Kommagetrennte Liste von Dateien/Ordnern, die vom Sync ausgeschlossen werden — ohne Anführungszeichen. Erlaubt reine Endungen (tmp, .log) und Glob-Muster (*.tmp, drafts/*, **/node_modules/**). Pfade sind relativ zum Sync-Ordner. Gilt für beide Seiten. Leer = nichts ignorieren.",
   ignorePatternsPlaceholder: "*.tmp, .DS_Store, drafts/*",
   neverDeleteRemoteName: "Do not delete in Google Drive",
   neverDeleteRemoteDesc:

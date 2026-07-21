@@ -115,7 +115,7 @@ export const fr: Partial<Messages> = {
   allowedExtensionsPlaceholder: "md, png, jpg, pdf",
   ignorePatternsName: "Motifs à ignorer",
   ignorePatternsDesc:
-    "Liste séparée par des virgules de fichiers/dossiers à exclure de la synchronisation. Accepte les extensions simples (« tmp », « .log ») et les motifs glob (« *.tmp », « drafts/* », « **/node_modules/** »). Les chemins sont relatifs au dossier de synchronisation. S'applique aux deux côtés. Vide = ne rien ignorer.",
+    "Liste séparée par des virgules de fichiers/dossiers à exclure de la synchronisation — sans guillemets. Accepte les extensions simples (tmp, .log) et les motifs glob (*.tmp, drafts/*, **/node_modules/**). Les chemins sont relatifs au dossier de synchronisation. S'applique aux deux côtés. Vide = ne rien ignorer.",
   ignorePatternsPlaceholder: "*.tmp, .DS_Store, drafts/*",
   neverDeleteRemoteName: "Ne pas supprimer dans Google Drive",
   neverDeleteRemoteDesc:
