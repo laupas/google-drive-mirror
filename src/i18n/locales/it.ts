@@ -190,6 +190,8 @@ export const it: Partial<Messages> = {
     "Google Drive Mirror: Nessuna cartella Drive configurata.",
   engineReadingLocal: "Lettura dei file locali…",
   engineFetchingDrive: "Recupero da Google Drive…",
+  engineFetchingDriveProgress:
+    "Recupero da Google Drive… {folders} cartelle, {files} file",
   engineDuplicateSameContent:
     "Più file Drive con lo stesso contenuto “{path}” — ne è stato scelto uno.",
   engineDuplicateDifferent:

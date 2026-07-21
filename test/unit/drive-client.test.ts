@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { requestUrl } from "obsidian";
-import { GoogleDriveClient } from "../../src/drive-client";
+import { GoogleDriveClient, mapPool, buildSubtree } from "../../src/drive-client";
 import { OAuthManager } from "../../src/oauth";
 
 const mockedRequestUrl = vi.mocked(requestUrl);
@@ -184,6 +184,314 @@ describe("GoogleDriveClient.listFiles — Mapping", () => {
     const calledUrl = mockedRequestUrl.mock.calls[0][0].url as string;
     expect(calledUrl).toContain("corpora=drive");
     expect(calledUrl).toContain("driveId=shared-drive-1");
+  });
+});
+
+describe("GoogleDriveClient.listFiles — parallel folder listing", () => {
+  it("lists sibling subfolders concurrently (per level), not one after another", async () => {
+    // Arrange: root has two subfolders 'a' and 'b'. Their child listings should
+    // be in-flight AT THE SAME TIME. We gate both on a barrier that only
+    // releases once both have started — a sequential BFS would deadlock here
+    // (the second never starts until the first resolves), so this test proving
+    // it completes is proof of concurrency.
+    const c = client();
+    let started = 0;
+    let releaseBarrier!: () => void;
+    const barrier = new Promise<void>((r) => (releaseBarrier = r));
+
+    mockedRequestUrl.mockImplementation((params: { url: string }) => {
+      // The query is URL-encoded (single quotes -> %27, spaces -> +), so
+      // normalize before matching on the parent-folder id.
+      const url = decodeURIComponent(params.url).replace(/\+/g, " ");
+      // Root listing: return two folders. Resolves immediately.
+      if (url.includes("'root' in parents")) {
+        return Promise.resolve(
+          listResponse([
+            { id: "a", name: "a", mimeType: "application/vnd.google-apps.folder" },
+            { id: "b", name: "b", mimeType: "application/vnd.google-apps.folder" },
+          ])
+        ) as never;
+      }
+      // Both child listings wait on the shared barrier; the barrier releases
+      // only once BOTH have entered -> requires them to run concurrently.
+      if (url.includes("'a' in parents") || url.includes("'b' in parents")) {
+        started++;
+        if (started === 2) releaseBarrier();
+        const inA = url.includes("'a' in parents");
+        const id = inA ? "fa" : "fb";
+        const name = inA ? "in-a.md" : "in-b.md";
+        return barrier.then(
+          () => listResponse([{ id, name, mimeType: "text/markdown" }]) as never
+        ) as never;
+      }
+      return Promise.resolve(listResponse([])) as never;
+    });
+
+    // Act
+    const { files } = await c.listFiles("root");
+
+    // Assert: both leaf files collected; both child queries ran (concurrently).
+    expect(started).toBe(2);
+    expect(files.map((f) => f.relativePath).sort()).toEqual([
+      "a/in-a.md",
+      "b/in-b.md",
+    ]);
+  });
+
+  it("reports cumulative progress once per folder level via onProgress", async () => {
+    // Arrange: root has folder 'sub' + file 'top.md'; 'sub' has 'inner.md'.
+    // Level 0 (root) discovers 1 folder + 1 file; level 1 ('sub') adds 1 file.
+    const c = client();
+    mockedRequestUrl
+      .mockResolvedValueOnce(
+        listResponse([
+          {
+            id: "sub-id",
+            name: "sub",
+            mimeType: "application/vnd.google-apps.folder",
+          },
+          { id: "top", name: "top.md", mimeType: "text/markdown" },
+        ])
+      )
+      .mockResolvedValueOnce(
+        listResponse([
+          { id: "inner", name: "inner.md", mimeType: "text/markdown" },
+        ])
+      );
+    const progress: { foldersScanned: number; filesFound: number }[] = [];
+
+    // Act
+    await c.listFiles("root", undefined, (p) => progress.push({ ...p }));
+
+    // Assert: one callback per level, cumulative counts.
+    expect(progress).toEqual([
+      { foldersScanned: 1, filesFound: 1 },
+      { foldersScanned: 1, filesFound: 2 },
+    ]);
+  });
+});
+
+describe("buildSubtree — flat-list tree reconstruction (Shared Drive)", () => {
+  const folder = (id: string, name: string, parent: string) => ({
+    id,
+    name,
+    mimeType: "application/vnd.google-apps.folder",
+    parents: [parent],
+  });
+  const file = (id: string, name: string, parent: string) => ({
+    id,
+    name,
+    mimeType: "text/markdown",
+    parents: [parent],
+  });
+
+  it("reconstructs nested relativePaths from parent links", () => {
+    // Arrange: root -> sub -> inner; files at each level.
+    const items = [
+      file("t", "top.md", "root"),
+      folder("s", "sub", "root"),
+      file("i", "inner.md", "s"),
+      folder("d", "deep", "s"),
+      file("x", "x.md", "d"),
+    ];
+
+    // Act
+    const { files, folders } = buildSubtree(items, "root");
+
+    // Assert
+    const paths = new Map(files.map((f) => [f.id, f.relativePath]));
+    expect(paths.get("t")).toBe("top.md");
+    expect(paths.get("i")).toBe("sub/inner.md");
+    expect(paths.get("x")).toBe("sub/deep/x.md");
+    expect(folders).toEqual([
+      { id: "s", relativePath: "sub" },
+      { id: "d", relativePath: "sub/deep" },
+    ]);
+  });
+
+  it("excludes items outside the sync root subtree", () => {
+    // Arrange: 'other' hangs off a DIFFERENT parent, not reachable from root.
+    const items = [
+      file("t", "top.md", "root"),
+      file("o", "other.md", "someOtherFolder"),
+    ];
+
+    // Act
+    const { files } = buildSubtree(items, "root");
+
+    // Assert: only the in-root file; 'other' is not a deletion, just excluded.
+    expect(files.map((f) => f.id)).toEqual(["t"]);
+  });
+
+  it("ignores orphans (parent not present) without throwing", () => {
+    // Arrange: 'ghost' points at a parent id that doesn't exist in the list.
+    const items = [file("t", "top.md", "root"), file("g", "ghost.md", "missing")];
+
+    // Act
+    const { files } = buildSubtree(items, "root");
+
+    // Assert
+    expect(files.map((f) => f.id)).toEqual(["t"]);
+  });
+
+  it("supports a root that is a SUBFOLDER of the drive (not the drive root)", () => {
+    // Arrange: sync root is 'sub'; 'top.md' at the drive root must be excluded.
+    const items = [
+      file("t", "top.md", "driveRoot"),
+      folder("s", "sub", "driveRoot"),
+      file("i", "inner.md", "s"),
+    ];
+
+    // Act: rebuild rooted at 'sub'.
+    const { files } = buildSubtree(items, "s");
+
+    // Assert: only 'inner.md', pathed relative to 'sub'.
+    expect(files.map((f) => [f.id, f.relativePath])).toEqual([
+      ["i", "inner.md"],
+    ]);
+  });
+
+  it("produces output IDENTICAL to the per-folder BFS for the same tree", async () => {
+    // The flat and BFS paths must be interchangeable — same files/folders/paths
+    // — so the reconciler behaves identically regardless of drive type.
+    // Arrange a small tree served two ways. Items carry `parents` (as the real
+    // API returns) so the fixtures are truly apples-to-apples.
+    const tree = {
+      root: [
+        {
+          id: "s",
+          name: "sub",
+          mimeType: "application/vnd.google-apps.folder",
+          parents: ["root"],
+        },
+        {
+          id: "t",
+          name: "top.md",
+          mimeType: "text/markdown",
+          parents: ["root"],
+        },
+      ],
+      s: [
+        {
+          id: "i",
+          name: "inner.md",
+          mimeType: "text/markdown",
+          parents: ["s"],
+        },
+      ],
+    } as const;
+
+    // BFS path (My Drive): serve per-folder queries.
+    const cBfs = client();
+    mockedRequestUrl.mockImplementation((params: { url: string }) => {
+      const url = decodeURIComponent(params.url).replace(/\+/g, " ");
+      if (url.includes("'root' in parents"))
+        return Promise.resolve(listResponse([...tree.root])) as never;
+      if (url.includes("'s' in parents"))
+        return Promise.resolve(listResponse([...tree.s])) as never;
+      return Promise.resolve(listResponse([])) as never;
+    });
+    const bfs = await cBfs.listFiles("root");
+
+    // Flat path via buildSubtree: same items, flattened into one list.
+    const flat = buildSubtree(
+      [tree.root[0], tree.root[1], tree.s[0]],
+      "root"
+    );
+
+    // Assert: byte-for-byte equal.
+    expect(flat).toEqual(bfs);
+  });
+});
+
+describe("GoogleDriveClient.listFiles — Shared Drive flat path", () => {
+  it("uses a single parent-less paginated query (corpora=drive), not per-folder BFS", async () => {
+    // Arrange: two pages of the WHOLE drive, no per-folder queries.
+    const c = client();
+    mockedRequestUrl
+      .mockResolvedValueOnce(
+        listResponse(
+          [
+            {
+              id: "s",
+              name: "sub",
+              mimeType: "application/vnd.google-apps.folder",
+              parents: ["root"],
+            },
+          ],
+          "page-2"
+        )
+      )
+      .mockResolvedValueOnce(
+        listResponse([
+          {
+            id: "i",
+            name: "inner.md",
+            mimeType: "text/markdown",
+            parents: ["s"],
+          },
+        ])
+      );
+
+    // Act
+    const { files, folders } = await c.listFiles("root", "shared-1");
+
+    // Assert: only 2 requests total (the two pages), NOT one-per-folder.
+    expect(mockedRequestUrl).toHaveBeenCalledTimes(2);
+    // Every query is the flat, parent-less drive query.
+    for (const call of mockedRequestUrl.mock.calls) {
+      const url = decodeURIComponent(call[0].url as string).replace(/\+/g, " ");
+      expect(url).toContain("corpora=drive");
+      expect(url).not.toContain("in parents");
+    }
+    // Tree reconstructed correctly.
+    expect(folders).toEqual([{ id: "s", relativePath: "sub" }]);
+    expect(files.map((f) => f.relativePath)).toEqual(["sub/inner.md"]);
+  });
+});
+
+describe("mapPool", () => {
+  it("preserves input order in the results regardless of completion order", async () => {
+    // Arrange: item 0 resolves LAST, item 2 resolves FIRST.
+    const delays = [30, 10, 0];
+    const worker = (ms: number) =>
+      new Promise<number>((r) => setTimeout(() => r(ms * 10), ms));
+
+    // Act
+    const out = await mapPool(delays, 8, worker);
+
+    // Assert: result[i] corresponds to items[i], not to finish order.
+    expect(out).toEqual([300, 100, 0]);
+  });
+
+  it("never exceeds the concurrency limit", async () => {
+    // Arrange
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const worker = async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+    };
+
+    // Act: 20 items, limit 3.
+    await mapPool(new Array(20).fill(0), 3, worker);
+
+    // Assert
+    expect(maxInFlight).toBeLessThanOrEqual(3);
+  });
+
+  it("returns an empty array for no items (no worker calls)", async () => {
+    // Arrange
+    const worker = vi.fn();
+
+    // Act
+    const out = await mapPool([], 8, worker);
+
+    // Assert
+    expect(out).toEqual([]);
+    expect(worker).not.toHaveBeenCalled();
   });
 });
 

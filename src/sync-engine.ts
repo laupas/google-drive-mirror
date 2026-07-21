@@ -169,7 +169,21 @@ export class SyncEngine {
       this.status.update(t("engineFetchingDrive"), 0);
       const listing = await this.drive.listFiles(
         this.active.driveFolderId,
-        this.active.driveSharedId || undefined
+        this.active.driveSharedId || undefined,
+        ({ foldersScanned, filesFound }) => {
+          // Reflect the recursive listing advancing (one update per folder
+          // level) so a large Drive doesn't look frozen on "Fetching…".
+          this.status.update(
+            t("engineFetchingDriveProgress", {
+              folders: foldersScanned,
+              files: filesFound,
+            }),
+            0
+          );
+        }
+      );
+      log.info(
+        `Drive listing done: ${listing.folders.length} folders, ${listing.files.length} files`
       );
 
       // Index files by vault-relative path.

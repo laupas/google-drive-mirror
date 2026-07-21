@@ -31,6 +31,24 @@ const MAX_RETRIES = 4;
 /** Base for the exponential backoff (ms): 500, 1000, 2000, 4000 … */
 const RETRY_BASE_MS = 500;
 
+/**
+ * How many folders are listed concurrently during the recursive (BFS) listing.
+ * The listing is latency-bound (one round-trip per folder), so on a large Drive
+ * a strictly sequential BFS spends minutes waiting. Fanning out per level with a
+ * bounded pool cuts the wall-clock roughly by this factor. Drive's per-user
+ * limit is ~120 queries/s; at ~300 ms latency, 16 in-flight is ~50 req/s — well
+ * under the cap, and the request wrapper still retries any 429s with backoff.
+ */
+const LIST_CONCURRENCY = 16;
+
+/** Live progress of a recursive `listFiles` run, reported per folder level. */
+export interface ListProgress {
+  /** Number of subfolders discovered so far. */
+  foldersScanned: number;
+  /** Number of files discovered so far. */
+  filesFound: number;
+}
+
 /** HTTP response from requestUrl (the subset the client uses). */
 export interface DriveResponse {
   status: number;
@@ -129,31 +147,118 @@ export class GoogleDriveClient {
    */
   async listFiles(
     rootFolderId: string,
-    driveId?: string
+    driveId?: string,
+    onProgress?: (progress: ListProgress) => void
+  ): Promise<{ files: DriveFile[]; folders: DriveFolder[] }> {
+    // Shared Drive: list the WHOLE drive in one paginated query (no parent
+    // filter) and rebuild the subtree locally. This turns thousands of
+    // per-folder round-trips into total_items/1000 requests — the dominant win
+    // on a large drive. Only safe for a Shared Drive, where corpora=drive scopes
+    // the query to exactly that drive; on My Drive a parent-less query would
+    // return the entire account, so My Drive keeps the BFS below.
+    if (driveId) {
+      return this.listFilesFlat(rootFolderId, driveId, onProgress);
+    }
+    return this.listFilesBfs(rootFolderId, onProgress);
+  }
+
+  /**
+   * BFS listing for My Drive: one query per folder, siblings listed with bounded
+   * concurrency per level. Deterministic order (preserves input order per level).
+   */
+  private async listFilesBfs(
+    rootFolderId: string,
+    onProgress?: (progress: ListProgress) => void
   ): Promise<{ files: DriveFile[]; folders: DriveFolder[] }> {
     const files: DriveFile[] = [];
     const folders: DriveFolder[] = [];
-    // Breadth-first search over the folder hierarchy.
-    const queue: { id: string; prefix: string }[] = [
+    // Breadth-first search over the folder hierarchy. Each level is listed with
+    // bounded concurrency: the listing is latency-bound (one round-trip per
+    // folder), so listing siblings in parallel is the dominant speed-up on a
+    // large Drive. Descendants discovered in a level form the next level.
+    let level: { id: string; prefix: string }[] = [
       { id: rootFolderId, prefix: "" },
     ];
 
-    while (queue.length > 0) {
-      const { id, prefix } = queue.shift()!;
-      const children = await this.listChildren(id, driveId);
-      for (const f of children) {
-        const relativePath = prefix ? `${prefix}/${f.name}` : f.name;
-        if (f.mimeType === "application/vnd.google-apps.folder") {
-          if (f.trashed) continue;
-          // Emit the folder itself as its own entry AND descend recursively.
-          folders.push({ id: f.id, relativePath });
-          queue.push({ id: f.id, prefix: relativePath });
-        } else {
-          files.push({ ...this.mapFile(f), relativePath });
+    while (level.length > 0) {
+      const childrenPerFolder = await mapPool(
+        level,
+        LIST_CONCURRENCY,
+        // My Drive path: no driveId.
+        ({ id }) => this.listChildren(id, undefined)
+      );
+
+      const nextLevel: { id: string; prefix: string }[] = [];
+      // Iterate in the original order so relativePath/order stay deterministic.
+      for (let i = 0; i < level.length; i++) {
+        const { prefix } = level[i];
+        for (const f of childrenPerFolder[i]) {
+          const relativePath = prefix ? `${prefix}/${f.name}` : f.name;
+          if (f.mimeType === FOLDER_MIME) {
+            if (f.trashed) continue;
+            // Emit the folder itself as its own entry AND descend recursively.
+            folders.push({ id: f.id, relativePath });
+            nextLevel.push({ id: f.id, prefix: relativePath });
+          } else {
+            files.push({ ...this.mapFile(f), relativePath });
+          }
         }
       }
+      // Report cumulative progress after each fully-listed level, so the UI can
+      // show the listing advancing instead of a single frozen "Fetching…".
+      onProgress?.({ foldersScanned: folders.length, filesFound: files.length });
+      level = nextLevel;
     }
     return { files, folders };
+  }
+
+  /**
+   * Flat listing for a Shared Drive: pull EVERY (non-trashed) item in the drive
+   * in pages of 1000, then rebuild the subtree rooted at `rootFolderId` locally
+   * from each item's `parents`. Produces the SAME { files, folders } (same
+   * relativePaths, same exclusion of anything outside the sync root) as the BFS,
+   * but with total_items/1000 requests instead of one per folder.
+   */
+  private async listFilesFlat(
+    rootFolderId: string,
+    driveId: string,
+    onProgress?: (progress: ListProgress) => void
+  ): Promise<{ files: DriveFile[]; folders: DriveFolder[] }> {
+    // 1) Fetch all items in the drive, reporting progress per page.
+    const all: RawDriveFile[] = [];
+    let pageToken: string | undefined;
+    do {
+      const params = new URLSearchParams({
+        q: "trashed = false",
+        fields: `nextPageToken,files(${FILE_FIELDS})`,
+        pageSize: "1000",
+        supportsAllDrives: "true",
+        includeItemsFromAllDrives: "true",
+        corpora: "drive",
+        driveId,
+      });
+      if (pageToken) params.set("pageToken", pageToken);
+
+      const resp = await this.request({
+        url: `${DRIVE_API}/files?${params.toString()}`,
+        method: "GET",
+        headers: await this.authHeader(),
+        throw: false,
+      });
+      this.assertOk(resp, "driveActionListFiles");
+      const json = resp.json as {
+        files?: RawDriveFile[];
+        nextPageToken?: string;
+      };
+      all.push(...(json.files ?? []));
+      pageToken = json.nextPageToken;
+      // Progress during the fetch: we don't yet know the tree, so report the
+      // raw item count as "files found" (folders resolved in step 2).
+      onProgress?.({ foldersScanned: 0, filesFound: all.length });
+    } while (pageToken);
+
+    // 2) Rebuild the subtree rooted at rootFolderId from the parent links.
+    return buildSubtree(all, rootFolderId, onProgress);
   }
 
   /** Lists the direct children of a folder (with pagination). */
@@ -529,16 +634,7 @@ export class GoogleDriveClient {
   }
 
   private mapFile(f: RawDriveFile): DriveFile {
-    return {
-      id: f.id,
-      name: f.name,
-      mimeType: f.mimeType,
-      modifiedTimeMs: f.modifiedTime ? Date.parse(f.modifiedTime) : 0,
-      md5Checksum: f.md5Checksum,
-      size: f.size ? Number(f.size) : undefined,
-      trashed: Boolean(f.trashed),
-      parents: f.parents,
-    };
+    return mapRawFile(f);
   }
 
   private assertOk(
@@ -569,6 +665,83 @@ interface RawDriveFile {
   appProperties?: Record<string, string>;
   /** Only set if the file/folder lives in a Shared Drive. */
   driveId?: string;
+}
+
+/** Drive mime type of a folder. */
+const FOLDER_MIME = "application/vnd.google-apps.folder";
+
+/** Maps a raw Drive API file to the internal DriveFile shape (pure). */
+function mapRawFile(f: RawDriveFile): DriveFile {
+  return {
+    id: f.id,
+    name: f.name,
+    mimeType: f.mimeType,
+    modifiedTimeMs: f.modifiedTime ? Date.parse(f.modifiedTime) : 0,
+    md5Checksum: f.md5Checksum,
+    size: f.size ? Number(f.size) : undefined,
+    trashed: Boolean(f.trashed),
+    parents: f.parents,
+  };
+}
+
+/**
+ * Rebuilds the subtree rooted at `rootFolderId` from a FLAT list of drive items,
+ * using each item's `parents` to reconstruct the hierarchy. Walks breadth-first
+ * from the root so the output order matches the per-folder BFS listing exactly:
+ * for each folder, its direct children (in list order) before descending.
+ *
+ * Anything not reachable from `rootFolderId` (outside the sync subtree, or an
+ * orphan whose parent chain doesn't lead to root) is simply not visited, hence
+ * excluded — the same result the BFS would produce, and crucially NOT treated as
+ * a deletion by the reconciler.
+ *
+ * Exported for unit testing (this is on the deletion-safety-critical path).
+ */
+export function buildSubtree(
+  items: RawDriveFile[],
+  rootFolderId: string,
+  onProgress?: (progress: ListProgress) => void
+): { files: DriveFile[]; folders: DriveFolder[] } {
+  const files: DriveFile[] = [];
+  const folders: DriveFolder[] = [];
+
+  // Index children by their (first) parent id, preserving input order.
+  const childrenByParent = new Map<string, RawDriveFile[]>();
+  for (const it of items) {
+    const parent = it.parents?.[0];
+    if (parent === undefined) continue;
+    const bucket = childrenByParent.get(parent);
+    if (bucket) bucket.push(it);
+    else childrenByParent.set(parent, [it]);
+  }
+
+  // BFS from the root, mirroring listFilesBfs: emit folders + descend, collect
+  // files with their accumulated relativePath.
+  let level: { id: string; prefix: string }[] = [
+    { id: rootFolderId, prefix: "" },
+  ];
+  while (level.length > 0) {
+    const nextLevel: { id: string; prefix: string }[] = [];
+    for (const { id, prefix } of level) {
+      const children = childrenByParent.get(id) ?? [];
+      for (const f of children) {
+        const relativePath = prefix ? `${prefix}/${f.name}` : f.name;
+        if (f.mimeType === FOLDER_MIME) {
+          // trashed items are already filtered out by the query, but stay
+          // defensive in case a caller passes an unfiltered list.
+          if (f.trashed) continue;
+          folders.push({ id: f.id, relativePath });
+          nextLevel.push({ id: f.id, prefix: relativePath });
+        } else {
+          files.push({ ...mapRawFile(f), relativePath });
+        }
+      }
+    }
+    onProgress?.({ foldersScanned: folders.length, filesFound: files.length });
+    level = nextLevel;
+  }
+
+  return { files, folders };
 }
 
 /**
@@ -602,4 +775,36 @@ function backoffMs(attempt: number): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/**
+ * Runs `worker` over `items` with a bounded number of concurrent invocations,
+ * returning the results in the SAME order as the input (result[i] is the result
+ * for items[i]), regardless of completion order. Used to fan out folder listings
+ * during the recursive Drive listing. Exported for unit testing.
+ */
+export async function mapPool<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  if (items.length === 0) return results;
+  const n = Math.max(1, Math.min(limit, items.length));
+  let next = 0;
+  const runners: Promise<void>[] = [];
+  for (let i = 0; i < n; i++) {
+    runners.push(
+      (async () => {
+        // Each runner pulls the next index until the queue is drained,
+        // writing to the result slot for that index (order-preserving).
+        while (next < items.length) {
+          const idx = next++;
+          results[idx] = await worker(items[idx]);
+        }
+      })()
+    );
+  }
+  await Promise.all(runners);
+  return results;
 }

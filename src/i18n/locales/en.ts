@@ -182,6 +182,8 @@ export const en = {
   engineNoDriveFolder: "Google Drive Mirror: No Drive folder configured.",
   engineReadingLocal: "Reading local files…",
   engineFetchingDrive: "Fetching Google Drive…",
+  engineFetchingDriveProgress:
+    "Fetching Google Drive… {folders} folders, {files} files",
   engineDuplicateSameContent:
     "Multiple identical Drive files “{path}” — one chosen.",
   engineDuplicateDifferent:
