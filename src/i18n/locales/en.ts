@@ -194,7 +194,6 @@ export const en = {
     "{localFiles} local · {remoteFiles} Drive files, {localFolders}/{remoteFolders} folders",
   engineNoChanges: "No changes to transfer.",
   engineActionError: "{type} “{path}”: {error}",
-  engineActionProgress: "{action} ({done}/{total})",
   engineActionDone: "{action} ✓",
   engineRemoteFolderNotDeleted:
     "Drive folder “{path}” not deleted: still contains files (protection against subtree loss).",

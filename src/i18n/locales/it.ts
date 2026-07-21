@@ -202,7 +202,6 @@ export const it: Partial<Messages> = {
     "{localFiles} locali · {remoteFiles} file Drive, {localFolders}/{remoteFolders} cartelle",
   engineNoChanges: "Nessuna modifica da trasferire.",
   engineActionError: "{type} “{path}”: {error}",
-  engineActionProgress: "{action} ({done}/{total})",
   engineActionDone: "{action} ✓",
   engineRemoteFolderNotDeleted:
     "Cartella Drive “{path}” non eliminata: contiene ancora file (protezione contro la perdita del sottoalbero).",

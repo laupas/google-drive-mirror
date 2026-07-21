@@ -204,7 +204,6 @@ export const fr: Partial<Messages> = {
     "{localFiles} locaux · {remoteFiles} fichiers Drive, {localFolders}/{remoteFolders} dossiers",
   engineNoChanges: "Aucune modification à transférer.",
   engineActionError: "{type} « {path} » : {error}",
-  engineActionProgress: "{action} ({done}/{total})",
   engineActionDone: "{action} ✓",
   engineRemoteFolderNotDeleted:
     "Dossier Drive « {path} » non supprimé : contient encore des fichiers (protection contre la perte du sous-arbre).",

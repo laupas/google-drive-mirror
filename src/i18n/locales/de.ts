@@ -197,7 +197,6 @@ export const de: Partial<Messages> = {
     "{localFiles} lokale · {remoteFiles} Drive-Dateien, {localFolders}/{remoteFolders} Ordner",
   engineNoChanges: "Keine Änderungen zu übertragen.",
   engineActionError: "{type} „{path}“: {error}",
-  engineActionProgress: "{action} ({done}/{total})",
   engineActionDone: "{action} ✓",
   engineRemoteFolderNotDeleted:
     "Drive-Ordner „{path}“ nicht gelöscht: enthält noch Dateien (Schutz vor Teilbaum-Verlust).",

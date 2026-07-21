@@ -366,14 +366,12 @@ export class SyncEngine {
           this.status.append("error", detail);
           log.error("Aktion fehlgeschlagen:", detail, e);
         }
-        // Progress + checkpoint after each completed action.
+        // Progress + checkpoint after each completed action. The count is
+        // placed at the FRONT of the line (right after the symbol) via
+        // describeAction, so it reads "↓ (12/340) Download …".
         done++;
         this.status.update(
-          t("engineActionProgress", {
-            action: describeAction(action),
-            done,
-            total: work.length,
-          }),
+          describeAction(action, `(${done}/${work.length})`),
           done,
           work.length
         );
@@ -1045,22 +1043,30 @@ function pathOfAction(a: SyncAction): string {
   return "path" in a ? a.path : "?";
 }
 
-/** Human-readable description of an action for status/log. */
-function describeAction(a: SyncAction): string {
+/**
+ * Human-readable description of an action for status/log.
+ *
+ * An optional `progress` fragment (e.g. "(12/340)") is inserted right after the
+ * leading symbol, so the running count sits at the front of the line
+ * (↓ (12/340) Download "…") instead of trailing behind the path.
+ */
+function describeAction(a: SyncAction, progress?: string): string {
   const p = pathOfAction(a);
+  // Space-padded progress to slot between the symbol and the action text.
+  const g = progress ? `${progress} ` : "";
   switch (a.type) {
     case "upload":
-      return `↑ ${t("uploadAction", { path: p })}`;
+      return `↑ ${g}${t("uploadAction", { path: p })}`;
     case "download":
-      return `↓ ${t("downloadAction", { path: p })}`;
+      return `↓ ${g}${t("downloadAction", { path: p })}`;
     case "deleteLocal":
-      return `🗑 ${t("deleteLocalAction", { path: p })}`;
+      return `🗑 ${g}${t("deleteLocalAction", { path: p })}`;
     case "deleteRemote":
-      return `🗑 ${t("deleteRemoteAction", { path: p })}`;
+      return `🗑 ${g}${t("deleteRemoteAction", { path: p })}`;
     case "keepRemoteDropLocal":
-      return `↛ ${t("keepRemoteDropLocalAction", { path: p })}`;
+      return `↛ ${g}${t("keepRemoteDropLocalAction", { path: p })}`;
     case "conflict":
-      return `⚔ ${t("conflictAction", {
+      return `⚔ ${g}${t("conflictAction", {
         path: p,
         winner:
           a.winner === "local"
@@ -1068,7 +1074,7 @@ function describeAction(a: SyncAction): string {
             : t("conflictWinnerRemote"),
       })}`;
     default:
-      return p;
+      return `${g}${p}`;
   }
 }
 
