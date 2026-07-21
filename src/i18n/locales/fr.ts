@@ -165,8 +165,16 @@ export const fr: Partial<Messages> = {
   syncTreeCheckboxLocalTitle: "Présent en local et sur Google Drive",
   syncTreeCheckboxRestoreTitle:
     "Uniquement sur Google Drive — cochez pour restaurer en local",
+  syncTreeColName: "Nom",
+  syncTreeColLocal: "Local",
+  syncTreeColIgnored: "Ignoré",
+  syncTreeCheckboxIgnoredTitle:
+    "Exclu par les filtres de cette cible (motifs d’exclusion, liste blanche d’extensions ou dossiers exclus)",
+  syncTreeCheckboxNotIgnoredTitle: "Non exclu par les filtres de cette cible",
   syncTreeRefresh: "Actualiser l’arborescence",
   syncTreeEmpty: "Rien de synchronisé pour l’instant.",
+  syncTreeFilterPlaceholder: "Filtrer par nom ou chemin…",
+  syncTreeNoMatch: "Aucune entrée ne correspond au filtre.",
   syncTreeRestored:
     "« {path} » sera restauré lors de la prochaine synchronisation.",
 

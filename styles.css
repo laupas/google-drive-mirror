@@ -136,6 +136,14 @@
 }
 
 /* Sync-Baum (alle Ordner/Dateien; keptRemoteOnly mit Aktionen). */
+/* Filter box above the tree. */
+.gds-tree-filter {
+  margin-bottom: 0.4rem;
+}
+.gds-tree-filter-input {
+  width: 100%;
+}
+
 .gds-sync-tree {
   max-height: 320px;
   overflow-y: auto;
@@ -170,8 +178,13 @@
   margin-left: auto;
 }
 .gds-tree-action {
+  /* Fixed width so the "Local"/"Ignored" columns line up across all rows
+     and the header, regardless of which controls a row actually renders. */
+  flex: 0 0 auto;
+  width: 3.5rem;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
 }
 .gds-tree-action input[type="checkbox"] {
   margin: 0;
@@ -187,6 +200,23 @@
   padding: 0 0.4rem;
   height: 1.4rem;
   font-size: var(--font-ui-smaller);
+}
+
+/* Column-header row: sticky at the top of the scrolling tree, muted labels
+   aligned above the per-row Local/Ignored columns. */
+.gds-tree-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--background-primary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  font-weight: var(--font-medium);
+}
+.gds-tree-col-head {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
 }
 
 /* Ordner: <details>/<summary>, einklappbar. Der native Marker bleibt links,

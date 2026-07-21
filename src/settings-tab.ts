@@ -12,7 +12,8 @@ import type GoogleDriveSyncPlugin from "./main";
 import { DriveFolderSuggest, LocalFolderSuggest } from "./suggesters";
 import { log, setDebugLogging } from "./logger";
 import { t } from "./i18n";
-import type { SyncStateEntry } from "./types";
+import { isFilteredByTargetSettings } from "./ignore";
+import type { SyncStateEntry, SyncTarget } from "./types";
 
 /**
  * Settings UI: OAuth setup (your own Google Cloud app), folder selection,
@@ -29,6 +30,8 @@ export class SettingsTab extends PluginSettingTab {
   private treeEls = new Map<string, HTMLElement>();
   /** Per-target description lines of the sync tree (for the "Drive-only" counter). */
   private treeDescSettings = new Map<string, Setting>();
+  /** Per-target sync-tree filter query (lowercased, "" = no filter). */
+  private treeFilters = new Map<string, string>();
   /** Target ids currently switching from "whole vault" to folder selection. */
   private pendingSubfolder = new Set<string>();
 
@@ -43,6 +46,7 @@ export class SettingsTab extends PluginSettingTab {
     this.statusEl = null;
     this.treeEls.clear();
     this.treeDescSettings.clear();
+    this.treeFilters.clear();
     this.pendingSubfolder.clear();
   }
 
@@ -634,6 +638,20 @@ export class SettingsTab extends PluginSettingTab {
           .onClick(() => this.refreshTree(id))
       );
     this.treeDescSettings.set(id, descSetting);
+
+    // Filter box: narrows the tree to paths containing the query (live).
+    const filterWrap = body.createDiv({ cls: "gds-tree-filter" });
+    const filterInput = filterWrap.createEl("input", {
+      type: "search",
+      cls: "gds-tree-filter-input",
+      placeholder: t("syncTreeFilterPlaceholder"),
+    });
+    filterInput.value = this.treeFilters.get(id) ?? "";
+    filterInput.addEventListener("input", () => {
+      this.treeFilters.set(id, filterInput.value.trim().toLowerCase());
+      this.refreshTree(id);
+    });
+
     const treeEl = body.createDiv({ cls: "gds-sync-tree" });
     this.treeEls.set(id, treeEl);
     this.refreshTree(id);
@@ -669,36 +687,68 @@ export class SettingsTab extends PluginSettingTab {
       treeEl.createDiv({ cls: "gds-tree-empty", text: t("syncTreeEmpty") });
       return;
     }
-    const root = buildTree(entries);
-    this.renderTreeNodes(treeEl, id, root.children);
+
+    const query = this.treeFilters.get(id) ?? "";
+    const filtered = filterEntries(entries, query);
+    const target = this.plugin.getTargets().find((tg) => tg.id === id) ?? null;
+    this.renderTreeHeader(treeEl);
+    if (filtered.length === 0) {
+      treeEl.createDiv({ cls: "gds-tree-empty", text: t("syncTreeNoMatch") });
+      return;
+    }
+    const root = buildTree(filtered);
+    // With an active filter, expand folders so the matches are visible.
+    this.renderTreeNodes(treeEl, id, target, root.children, query.length > 0);
+  }
+
+  /**
+   * Column header row for the tree: names the two right-aligned status columns
+   * ("Local" / "Ignored"). Kept outside the scrolling body-per-row layout but
+   * sharing the same flex structure so the columns line up with each row's
+   * action bar.
+   */
+  private renderTreeHeader(treeEl: HTMLElement): void {
+    const header = treeEl.createDiv({ cls: "gds-tree-row gds-tree-header" });
+    header.createSpan({ cls: "gds-tree-label", text: t("syncTreeColName") });
+    const actions = header.createDiv({ cls: "gds-tree-actions" });
+    actions.createSpan({
+      cls: "gds-tree-action gds-tree-col-head",
+      text: t("syncTreeColLocal"),
+    });
+    actions.createSpan({
+      cls: "gds-tree-action gds-tree-col-head",
+      text: t("syncTreeColIgnored"),
+    });
   }
 
   /** Renders the children of a tree node (folders as <details>, files as a row). */
   private renderTreeNodes(
     parentEl: HTMLElement,
     targetId: string,
-    nodes: TreeNode[]
+    target: SyncTarget | null,
+    nodes: TreeNode[],
+    expand = false
   ): void {
-    // Folders first, then files; each alphabetically.
+    // Folders first, then files; each alphabetically (case-insensitive).
     const sorted = [...nodes].sort((a, b) => {
       if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
-      return a.name.localeCompare(b.name);
+      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
     });
 
     for (const node of sorted) {
       if (node.isFolder) {
         const details = parentEl.createEl("details", { cls: "gds-tree-folder" });
-        details.open = false; // collapsed (user request: collapsible)
+        details.open = expand; // collapsed by default; expanded while filtering
         const summary = details.createEl("summary");
         // Row in its own div inside the <summary>, so the disclosure marker
         // stays on the left and our flex layout doesn't push it away.
         const row = summary.createDiv({ cls: "gds-tree-file gds-tree-folder-row" });
-        this.renderTreeRow(row, targetId, node, `📁 ${node.name}`);
+        this.renderTreeRow(row, targetId, target, node, `📁 ${node.name}`);
         const childrenEl = details.createDiv({ cls: "gds-tree-children" });
-        this.renderTreeNodes(childrenEl, targetId, node.children);
+        this.renderTreeNodes(childrenEl, targetId, target, node.children, expand);
       } else {
         const row = parentEl.createDiv({ cls: "gds-tree-file" });
-        this.renderTreeRow(row, targetId, node, node.name);
+        this.renderTreeRow(row, targetId, target, node, node.name);
       }
     }
   }
@@ -711,6 +761,7 @@ export class SettingsTab extends PluginSettingTab {
   private renderTreeRow(
     rowEl: HTMLElement,
     targetId: string,
+    target: SyncTarget | null,
     node: TreeNode,
     label: string
   ): void {
@@ -724,24 +775,33 @@ export class SettingsTab extends PluginSettingTab {
 
     // Action bar on the right (kept even when empty, so the column stays aligned).
     const actions = rowEl.createDiv({ cls: "gds-tree-actions" });
-    this.renderRowActions(actions, targetId, node);
+    this.renderRowActions(actions, targetId, target, node);
   }
 
   /**
-   * Builds the row-related action buttons (right-aligned). Add further
-   * buttons (ignore, …) here — each via `addRowAction`.
+   * Builds the row-related status columns (right-aligned), one per header
+   * column. Add further buttons here — each via `addRowAction`.
    *
-   * Currently: the "exists locally" checkbox on EVERY row.
-   *  - normal (two-sided) entry: checked + disabled (display only).
-   *  - "Drive-only" (keptRemoteOnly): unchecked + clickable; checking restores
-   *    the file locally on the next sync.
+   * 1. "Local" checkbox on EVERY row:
+   *    - normal (two-sided) entry: checked + disabled (display only).
+   *    - "Drive-only" (keptRemoteOnly): unchecked + clickable; checking restores
+   *      the file locally on the next sync.
+   * 2. "Ignored" checkbox (read-only): checked + disabled when the path matches
+   *    the target's ignore patterns / extension whitelist / exclude-folders.
    */
   private renderRowActions(
     actionsEl: HTMLElement,
     targetId: string,
+    target: SyncTarget | null,
     node: TreeNode
   ): void {
-    if (!node.path) return; // pure structure folders without a state entry
+    if (!node.path) {
+      // Pure structure folders without a state entry keep no checkboxes, but
+      // still reserve the two columns so the grid stays aligned.
+      actionsEl.createSpan({ cls: "gds-tree-action" });
+      actionsEl.createSpan({ cls: "gds-tree-action" });
+      return;
+    }
 
     const path = node.path;
     const remoteOnly = node.keptRemoteOnly;
@@ -767,6 +827,26 @@ export class SettingsTab extends PluginSettingTab {
             this.display();
           }
         };
+      },
+    });
+
+    // "Ignored" column: read-only indicator of the target's own filters.
+    const ignored = target
+      ? isFilteredByTargetSettings(path, node.isFolder, {
+          allowedExtensions: target.allowedExtensions,
+          ignorePatterns: target.ignorePatterns,
+          excludeFolders: target.excludeFolders,
+        })
+      : false;
+    this.addRowAction(actionsEl, {
+      cls: "gds-action-ignored",
+      title: ignored
+        ? t("syncTreeCheckboxIgnoredTitle")
+        : t("syncTreeCheckboxNotIgnoredTitle"),
+      control: (el) => {
+        const cb = el.createEl("input", { type: "checkbox" });
+        cb.checked = ignored;
+        cb.disabled = true; // read-only status
       },
     });
   }
@@ -893,6 +973,48 @@ export class SyncLogModal extends Modal {
       row.createSpan({ cls: "gds-log-msg", text: e.message });
     }
   }
+}
+
+/**
+ * Filters the flat sync-state entries by a (already lowercased) query for the
+ * sync-tree search box. An empty query returns everything unchanged.
+ *
+ * An entry is KEPT when:
+ *  - its path contains the query (a direct match), OR
+ *  - it is an ANCESTOR folder of a matching entry (so the path to a match stays
+ *    visible), OR
+ *  - it is a DESCENDANT of a matching FOLDER (so filtering a folder keeps its
+ *    whole subtree).
+ *
+ * Pure function (no DOM), unit-tested in `test/unit/filter-entries.test.ts`.
+ */
+export function filterEntries(
+  entries: SyncStateEntry[],
+  query: string
+): SyncStateEntry[] {
+  if (!query) return entries;
+
+  const matched = entries.filter((e) => e.path.toLowerCase().includes(query));
+  if (matched.length === 0) return [];
+
+  // Prefixes of matched FOLDERS: everything under them is kept.
+  const matchedFolderPrefixes = matched
+    .filter((e) => e.isFolder)
+    .map((e) => e.path + "/");
+  // Matched paths: their ancestor folders must stay visible.
+  const matchedPaths = matched.map((e) => e.path);
+
+  return entries.filter((e) => {
+    const path = e.path;
+    if (path.toLowerCase().includes(query)) return true;
+    // Ancestor of a match?
+    if (e.isFolder && matchedPaths.some((m) => m.startsWith(path + "/"))) {
+      return true;
+    }
+    // Descendant of a matched folder?
+    if (matchedFolderPrefixes.some((p) => path.startsWith(p))) return true;
+    return false;
+  });
 }
 
 /** A node in the sync tree (folder or file). */

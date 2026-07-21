@@ -157,9 +157,17 @@ export const en = {
   syncTreeCheckboxTitle: "Uncheck to restore locally",
   syncTreeCheckboxLocalTitle: "Stored locally and in Google Drive",
   syncTreeCheckboxRestoreTitle: "Only in Google Drive — check to restore locally",
+  syncTreeColName: "Name",
+  syncTreeColLocal: "Local",
+  syncTreeColIgnored: "Ignored",
+  syncTreeCheckboxIgnoredTitle:
+    "Excluded by this target's filters (ignore patterns, extension whitelist, or excluded folders)",
+  syncTreeCheckboxNotIgnoredTitle: "Not excluded by this target's filters",
   syncTreeRestored: "“{path}” will be restored on the next sync.",
   syncTreeRefresh: "Refresh tree",
   syncTreeEmpty: "Nothing synced yet.",
+  syncTreeFilterPlaceholder: "Filter by name or path…",
+  syncTreeNoMatch: "No entries match the filter.",
 
   // ---- Live status line (settings-tab.ts) ----
   statusLineReady: "Ready.",

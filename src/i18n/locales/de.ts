@@ -160,9 +160,17 @@ export const de: Partial<Messages> = {
   syncTreeCheckboxTitle: "Häkchen entfernen, um lokal wiederherzustellen",
   syncTreeCheckboxLocalTitle: "Lokal und in Google Drive vorhanden",
   syncTreeCheckboxRestoreTitle: "Nur in Google Drive — anhaken, um lokal wiederherzustellen",
+  syncTreeColName: "Name",
+  syncTreeColLocal: "Lokal",
+  syncTreeColIgnored: "Ignoriert",
+  syncTreeCheckboxIgnoredTitle:
+    "Durch die Filter dieses Ziels ausgeschlossen (Ignorier-Muster, Erweiterungs-Whitelist oder ausgeschlossene Ordner)",
+  syncTreeCheckboxNotIgnoredTitle: "Nicht durch die Filter dieses Ziels ausgeschlossen",
   syncTreeRestored: "„{path}“ wird beim nächsten Sync wieder hergestellt.",
   syncTreeRefresh: "Baum aktualisieren",
   syncTreeEmpty: "Noch nichts synchronisiert.",
+  syncTreeFilterPlaceholder: "Nach Name oder Pfad filtern…",
+  syncTreeNoMatch: "Keine Einträge passen zum Filter.",
 
   // ---- Live-Statuszeile ----
   statusLineReady: "Bereit.",
