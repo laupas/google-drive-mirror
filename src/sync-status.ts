@@ -124,6 +124,16 @@ export class SyncStatus {
     if (this.progress.phase === "running") this.emit();
   }
 
+  /**
+   * Unconditionally notifies subscribers, regardless of phase. Used after the
+   * plugin's `running` flag flips (e.g. at the end of a run) so UI that depends
+   * on that flag re-evaluates — `touch()` won't do this once the phase is no
+   * longer "running".
+   */
+  notify(): void {
+    this.emit();
+  }
+
   // ---- Mutations (called by the engine) ----
 
   start(message = t("statusSyncStarted"), startedMs: number): void {

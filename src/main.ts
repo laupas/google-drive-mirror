@@ -224,6 +224,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     } finally {
       this.running = false;
       window.clearInterval(ticker);
+      // The final status emit (finish()) fired while `running` was still true,
+      // so subscribers that gate on isSyncing() (sync button, status bar) saw
+      // the stale value. Notify once more now that the flag has cleared, so the
+      // button re-enables and the status bar settles on the final state.
+      this.status.notify();
     }
   }
 

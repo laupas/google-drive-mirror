@@ -165,4 +165,21 @@ describe("SyncStatus.clearLog / touch", () => {
     // Assert
     expect(listener).not.toHaveBeenCalled();
   });
+
+  it("notify emits even when the phase is no longer 'running' (button re-enable)", () => {
+    // Arrange: a finished run leaves the phase at 'done', where touch() is a
+    // no-op — but the UI still needs a final emit once `running` clears.
+    const status = new SyncStatus();
+    status.finish("done", "ok");
+    const listener = vi.fn();
+    status.subscribe(listener);
+
+    // Act
+    status.touch(); // no-op in 'done'
+    expect(listener).not.toHaveBeenCalled();
+    status.notify();
+
+    // Assert: notify emits regardless of phase.
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
 });
