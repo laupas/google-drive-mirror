@@ -2,10 +2,12 @@
  * Desktop-only OAuth loopback helper.
  *
  * Runs a one-shot local HTTP server on 127.0.0.1 to catch Google's redirect
- * (the "Desktop app" client flow). Node's `http` module is loaded via dynamic
- * `import()` guarded by `Platform.isDesktop`, so there is no static Node import
- * and mobile never evaluates it — `oauth.ts` additionally only imports this
- * module lazily inside its desktop branch.
+ * (the "Desktop app" client flow). Node's `http` module is loaded via a CommonJS
+ * `require("http")` guarded by `Platform.isDesktop`, so there is no static Node
+ * import and mobile never evaluates it — `oauth.ts` additionally only imports
+ * this module lazily inside its desktop branch. We deliberately do NOT use
+ * `await import("http")`: esbuild would leave that as a native ESM dynamic
+ * import, which the Electron renderer cannot resolve for a bare Node specifier.
  *
  * We deliberately do NOT reference `@types/node` here (not `import`, not a type
  * query): the Obsidian lint config treats Node types as unavailable, so any such
@@ -45,6 +47,16 @@ interface NodeHttpModule {
   ): NodeServer;
 }
 
+/**
+ * Minimal shape of the CommonJS `require` present in the Electron renderer.
+ * Declared locally (not via `@types/node`) for the same reason as the Node
+ * interfaces above: referencing Node types trips the Obsidian lint config.
+ */
+interface NodeRequire {
+  (id: string): unknown;
+}
+declare const require: NodeRequire;
+
 /** Result of a successful loopback capture. */
 export interface LoopbackResult {
   /** The authorization code returned by Google. */
@@ -73,7 +85,13 @@ export async function awaitLoopbackAuthCode(
   if (!Platform.isDesktop) {
     throw new Error(t("oauthLoopbackDesktopOnly"));
   }
-  const httpMod = (await import("http")) as unknown as NodeHttpModule;
+  // Load Node's http via CommonJS require, NOT `await import("http")`. esbuild
+  // leaves a dynamic `import()` of an external as a native ESM import, which the
+  // Electron renderer's module loader cannot resolve for a bare Node specifier
+  // ("Failed to resolve module specifier 'http'"). require() resolves the
+  // built-in synchronously in the renderer. Guarded by Platform.isDesktop above,
+  // and this module is only ever imported from oauth.ts's desktop branch.
+  const httpMod = require("http") as NodeHttpModule;
 
   return new Promise<LoopbackResult>((resolve, reject) => {
     let settled = false;
