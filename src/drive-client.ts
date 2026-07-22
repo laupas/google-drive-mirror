@@ -70,18 +70,28 @@ export type RequestFn = (params: {
 /** Default HTTP implementation: Obsidian's `requestUrl`, mapped to `RequestFn`. */
 const defaultRequestImpl: RequestFn = async (params) => {
   const resp = await requestUrl(params);
-  // IMPORTANT: `json` must be LAZY. `requestUrl`'s `.json` is a getter that
-  // JSON.parses the body; on mobile, touching it for a BINARY download
-  // (?alt=media returns raw bytes) throws "JSON Parse error: Unrecognized
-  // token" and every download fails. We only parse when a caller actually
-  // reads `.json` (JSON endpoints), never for binary downloads.
+  // IMPORTANT: every representation must be LAZY (accessed only when a caller
+  // reads it). Two reasons:
+  //   1. `.json` JSON.parses the body; on mobile, touching it for a BINARY
+  //      download (?alt=media returns raw bytes) throws "JSON Parse error:
+  //      Unrecognized token" and every download fails.
+  //   2. Memory: `resp.text` (UTF-16 string) and `resp.arrayBuffer` each
+  //      materialize the WHOLE body. The Drive listing reads only `.json` over
+  //      thousands of folder requests (16 concurrent); eagerly reading `text`
+  //      AND `arrayBuffer` there pinned ~3 copies of every response body at
+  //      once and blew the iOS WebView memory budget. As getters, a listing
+  //      response now materializes only the parsed JSON, not all three.
   return {
     status: resp.status,
-    text: resp.text,
+    get text() {
+      return resp.text;
+    },
     get json() {
       return resp.json;
     },
-    arrayBuffer: resp.arrayBuffer,
+    get arrayBuffer() {
+      return resp.arrayBuffer;
+    },
   };
 };
 

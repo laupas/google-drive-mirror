@@ -205,6 +205,12 @@ export interface SyncSummary {
   deletedRemote: number;
   conflicts: number;
   errors: string[];
+  /**
+   * True when the run stopped early because it hit the per-run action cap
+   * (mobile batch limit) and more work remains. The caller re-runs the sync to
+   * continue. Absent/false means the run processed everything.
+   */
+  moreRemaining?: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {

@@ -201,6 +201,10 @@ export const en = {
   engineCountSummary:
     "{localFiles} local · {remoteFiles} Drive files, {localFolders}/{remoteFolders} folders",
   engineNoChanges: "No changes to transfer.",
+  engineBatchLimited:
+    "Large sync: processing {batch} of {total} this run; the rest continues on the next sync.",
+  engineBatchMore:
+    "Synced {done} of {total}. Run sync again to continue the rest.",
   engineActionError: "{type} “{path}”: {error}",
   engineActionDone: "{action} ✓",
   engineRemoteFolderNotDeleted:

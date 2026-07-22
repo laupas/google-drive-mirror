@@ -204,6 +204,10 @@ export const de: Partial<Messages> = {
   engineCountSummary:
     "{localFiles} lokale · {remoteFiles} Drive-Dateien, {localFolders}/{remoteFolders} Ordner",
   engineNoChanges: "Keine Änderungen zu übertragen.",
+  engineBatchLimited:
+    "Große Synchronisierung: {batch} von {total} in diesem Durchlauf; der Rest folgt bei der nächsten Synchronisierung.",
+  engineBatchMore:
+    "{done} von {total} synchronisiert. Synchronisierung erneut starten, um den Rest fortzusetzen.",
   engineActionError: "{type} „{path}“: {error}",
   engineActionDone: "{action} ✓",
   engineRemoteFolderNotDeleted:

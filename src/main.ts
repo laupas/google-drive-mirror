@@ -218,7 +218,19 @@ export default class GoogleDriveSyncPlugin extends Plugin {
         for (const target of targets) {
           const rt = this.runtimes.get(target.id);
           if (!rt) continue;
-          await rt.engine.sync(showNotice);
+          // A single engine.sync() may process only a batch of the pending
+          // actions (mobile per-run cap, to keep peak memory under the iOS
+          // WebView limit). Re-run the same target until it reports no more
+          // remaining work. A short yield between passes lets the WebView
+          // reclaim memory from the finished batch before the next one. The
+          // pass count is bounded as a safety net against an unexpected loop.
+          const MAX_PASSES = 1000;
+          for (let pass = 0; pass < MAX_PASSES; pass++) {
+            const summary = await rt.engine.sync(showNotice);
+            if (!summary?.moreRemaining) break;
+            // Yield so the just-finished batch's memory can be collected.
+            await sleep(250);
+          }
         }
       });
     } finally {
@@ -636,6 +648,11 @@ function generateTargetId(): string {
   const rand = Math.random().toString(36).slice(2, 10);
   const time = Date.now().toString(36);
   return `${time}${rand}`;
+}
+
+/** Resolves after `ms` milliseconds (used to yield between sync batches). */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 /** Removes fields from earlier plugin versions that no longer belong here. */

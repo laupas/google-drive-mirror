@@ -27,11 +27,14 @@ interface SetupOptions extends Partial<SyncTarget> {
   syncState?: Record<string, SyncStateEntry>;
   /** Local folders of OTHER targets (excluded from this target's scope). */
   siblingLocalFolders?: string[];
+  /** Per-run action cap (mobile batch limit). Default: unlimited. */
+  perRunActionCap?: number;
 }
 
 /** Builds engine + fakes; returns all parts for arrange/assert. */
 function setup(opts: SetupOptions = {}) {
-  const { syncState, siblingLocalFolders, ...targetOverrides } = opts;
+  const { syncState, siblingLocalFolders, perRunActionCap, ...targetOverrides } =
+    opts;
   const target: SyncTarget = {
     ...newTarget("t1", "Test target"),
     driveFolderId: "root",
@@ -53,7 +56,8 @@ function setup(opts: SetupOptions = {}) {
     target,
     status,
     vault.fileManager as never,
-    () => siblingLocalFolders ?? []
+    () => siblingLocalFolders ?? [],
+    () => perRunActionCap ?? Infinity
   );
   return { engine, vault, drive, store, storage, target, status };
 }
@@ -767,5 +771,87 @@ describe("SyncEngine.sync — Hash-Cache (mtime+size)", () => {
 
     // Assert
     expect(vault.adapter.readBinaryCalls).toContain("new.md");
+  });
+});
+
+describe("SyncEngine.sync — per-run batch cap (mobile) + resume", () => {
+  it("processes only the cap and reports moreRemaining", async () => {
+    // Arrange: 5 remote files, cap of 2.
+    const { engine, drive } = setup({ perRunActionCap: 2 });
+    for (let i = 0; i < 5; i++) {
+      drive.seed({ path: `f${i}.md`, content: `c${i}`, md5: `m${i}`, id: `d${i}` });
+    }
+
+    // Act
+    const summary = await engine.sync(false);
+
+    // Assert: only 2 downloaded this run; more remains.
+    expect(summary?.downloaded).toBe(2);
+    expect(summary?.moreRemaining).toBe(true);
+  });
+
+  it("resumes across runs and eventually completes all files", async () => {
+    // Arrange: 5 remote files, cap of 2.
+    const { engine, vault, drive, store } = setup({ perRunActionCap: 2 });
+    for (let i = 0; i < 5; i++) {
+      drive.seed({ path: `f${i}.md`, content: `c${i}`, md5: `m${i}`, id: `d${i}` });
+    }
+
+    // Act: run until the engine reports it's done (mimics main.runSync's loop).
+    let totalDownloaded = 0;
+    let passes = 0;
+    let last;
+    do {
+      last = await engine.sync(false);
+      totalDownloaded += last?.downloaded ?? 0;
+      passes++;
+      expect(passes).toBeLessThan(20); // guard against a runaway loop
+    } while (last?.moreRemaining);
+
+    // Assert: all 5 files ended up local; last run reported completion.
+    expect(totalDownloaded).toBe(5);
+    expect(last?.moreRemaining).toBeFalsy();
+    for (let i = 0; i < 5; i++) {
+      expect(await vault.adapter.exists(`f${i}.md`)).toBe(true);
+      // Base marks each as two-sided (fully synced).
+      const entry = store.get(`f${i}.md`);
+      expect(entry?.local).toBe(true);
+      expect(entry?.remote).toBe(true);
+    }
+  });
+
+  it("a capped run performs NO deletions (folder-delete phase is deferred)", async () => {
+    // Arrange: base attests a local file that no longer exists locally and isn't
+    // on Drive, which WOULD normally reconcile to a deletion. Also queue enough
+    // downloads to exceed the cap so the run is capped and returns before the
+    // delete phase.
+    const { engine, drive } = setup({
+      perRunActionCap: 1,
+      syncState: {
+        "old.md": {
+          path: "old.md",
+          isFolder: false,
+          local: true,
+          remote: true,
+          driveId: "old-id",
+          md5: "old",
+          size: 3,
+        } as SyncStateEntry,
+      },
+    });
+    for (let i = 0; i < 3; i++) {
+      drive.seed({ path: `f${i}.md`, content: `c${i}`, md5: `m${i}`, id: `d${i}` });
+    }
+
+    // Act
+    const summary = await engine.sync(false);
+
+    // Assert: run was capped and did NOT trash anything (local or remote) — the
+    // delete phase runs only on an uncapped, fully-settled run.
+    expect(summary?.moreRemaining).toBe(true);
+    expect(summary?.deletedRemote).toBe(0);
+    expect(summary?.deletedLocal).toBe(0);
+    expect(drive.calls.trashFile).toEqual([]);
+    expect(drive.calls.trashFolder).toEqual([]);
   });
 });

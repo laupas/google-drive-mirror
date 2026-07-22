@@ -1,4 +1,4 @@
-import { Notice, TFile, TFolder, Vault, normalizePath } from "obsidian";
+import { Notice, Platform, TFile, TFolder, Vault, normalizePath } from "obsidian";
 import type { FileManager } from "obsidian";
 import { GoogleDriveClient } from "./drive-client";
 import { LocalFile, reconcile, reconcileFolders } from "./reconciler";
@@ -32,6 +32,26 @@ const CHECKPOINT_EVERY = 50;
  * (transient 429s are retried by the Drive client's request wrapper).
  */
 const MAX_CONCURRENCY = 6;
+
+/**
+ * Maximum number of real file actions (upload/download/delete) processed in a
+ * SINGLE run on mobile. A from-zero full sync of a large vault would otherwise
+ * do thousands of transfers in one run and push the iOS WebView past its memory
+ * ceiling — the process is then silently killed (OOM), sometimes mid-run. By
+ * capping the work per run and relying on the existing checkpoint/resume model
+ * (completed transfers are marked local=true/remote=true in the base, so the
+ * next run only picks up the remainder), a huge sync completes reliably over
+ * several short runs instead of one memory-heavy burst. `Infinity` on desktop —
+ * no memory ceiling there, so a run always finishes in one pass.
+ *
+ * The cap counts only "real" actions (transfers), not folder creates or noops.
+ */
+const MAX_ACTIONS_PER_RUN_MOBILE = 400;
+
+/** Per-run action cap for the current platform. */
+function maxActionsPerRun(): number {
+  return Platform.isMobile ? MAX_ACTIONS_PER_RUN_MOBILE : Infinity;
+}
 
 /**
  * Frozen copy of the scope-relevant settings fields for the duration of ONE
@@ -108,7 +128,13 @@ export class SyncEngine {
     private target: SyncTarget,
     private status: SyncStatus,
     private fileManager: FileManager,
-    private siblingLocalFolders: () => string[] = () => []
+    private siblingLocalFolders: () => string[] = () => [],
+    /**
+     * Max "real" file actions per run (mobile batch cap). Defaults to the
+     * platform value (mobile: MAX_ACTIONS_PER_RUN_MOBILE, desktop: Infinity).
+     * Injectable so tests can drive the batch/resume behavior with a small cap.
+     */
+    private perRunActionCap: () => number = maxActionsPerRun
   ) {}
 
   /**
@@ -304,10 +330,25 @@ export class SyncEngine {
       });
 
       // Only count "real" actions (noop not as a progress step).
-      const work = actions.filter((a) => a.type !== "noop");
+      const allWork = actions.filter((a) => a.type !== "noop");
+      // Cap the work per run on mobile so a huge from-zero sync doesn't do
+      // thousands of transfers in one memory-heavy burst (iOS OOM). The
+      // remainder is resumed on the next run — completed transfers are marked
+      // done in the base, so reconcile only re-derives what's left.
+      const perRunCap = this.perRunActionCap();
+      const capped = allWork.length > perRunCap;
+      const work = capped ? allWork.slice(0, perRunCap) : allWork;
       this.status.setTotal(work.length);
-      if (work.length === 0) {
+      if (allWork.length === 0) {
         this.status.append("info", t("engineNoChanges"));
+      } else if (capped) {
+        this.status.append(
+          "info",
+          t("engineBatchLimited", {
+            batch: work.length,
+            total: allWork.length,
+          })
+        );
       }
 
       // 1) CREATE folders (before files, so target folders exist).
@@ -380,6 +421,32 @@ export class SyncEngine {
           await this.checkpoint();
         }
       });
+
+      // When the run was capped (mobile batch limit), the file transfers are
+      // only partially done, so the base does not yet reflect the final state.
+      // Folder deletes and the noopFolder refresh MUST NOT run now: deleting a
+      // folder whose files haven't transferred yet, or marking folders
+      // two-sided before their files exist, is unsafe. Skip straight to a
+      // partial checkpoint and let the next run continue. Folder CREATES
+      // already ran above (idempotent, safe to repeat).
+      if (capped) {
+        await this.checkpoint();
+        this.running = false;
+        summary.moreRemaining = true;
+        this.status.finish(
+          summary.errors.length ? "error" : "done",
+          t("engineBatchMore", {
+            done: done,
+            total: allWork.length,
+          })
+        );
+        if (showNotice) {
+          new Notice(
+            t("engineBatchMore", { done: done, total: allWork.length })
+          );
+        }
+        return summary;
+      }
 
       // 3) DELETE / KEEP folders (after files; deepest first).
       //    keepRemoteFolder performs no Drive operation, only state — harmless in
