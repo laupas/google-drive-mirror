@@ -362,6 +362,13 @@ export class SyncEngine {
       if (work.length === 0) {
         this.status.append("info", t("engineNoChanges"));
       }
+      // DIAGNOSTICS: reconcile finished — flush action/folder-action counts so
+      // the persistent log shows we reached the transfer phase and how much
+      // work it produced.
+      void this.status.appendNow(
+        "info",
+        `[diag] reconciled — fileActions=${work.length}, folderActions=${folderActions.length}`
+      );
 
       // 1) CREATE folders (before files, so target folders exist).
       //    Sorted by path depth: parent folders first.
@@ -371,6 +378,10 @@ export class SyncEngine {
             a.type === "createLocalFolder" || a.type === "createRemoteFolder"
         )
         .sort((a, b) => depth(a.path) - depth(b.path));
+      void this.status.appendNow(
+        "info",
+        `[diag] creating folders — count=${folderCreates.length}`
+      );
       for (const fa of folderCreates) {
         try {
           await this.applyFolderAction(fa, remoteFolders, summary);
@@ -386,6 +397,8 @@ export class SyncEngine {
         }
       }
 
+      void this.status.appendNow("info", "[diag] folders created");
+
       // 2a) noop actions only refresh the base (no I/O) — handle them quickly
       //     and sequentially first.
       for (const action of actions) {
@@ -393,6 +406,7 @@ export class SyncEngine {
           await this.applyAction(action, local, remote, summary);
         }
       }
+      void this.status.appendNow("info", "[diag] transfer phase start");
 
       // 2b) Real file actions run through a bounded concurrency pool. File
       //     transfers are independent (distinct paths → distinct state keys), so
@@ -455,6 +469,13 @@ export class SyncEngine {
           if (++sinceCheckpoint >= CHECKPOINT_EVERY) {
             sinceCheckpoint = 0;
             await this.checkpoint();
+            // DIAGNOSTICS: durable progress marker every CHECKPOINT_EVERY
+            // transfers, so a mid-transfer WebView teardown leaves a trail
+            // showing how far the transfer phase got.
+            void this.status.appendNow(
+              "info",
+              `[diag] transfers done=${done}/${work.length}`
+            );
           }
         }
       );
