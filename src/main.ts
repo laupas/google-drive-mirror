@@ -213,6 +213,16 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.running = true;
     // Lightweight ticker so the elapsed time keeps updating even without new events.
     const ticker = window.setInterval(() => this.status.touch(), 1000);
+    // Capture async failures that escape the engine's own try/catch (unhandled
+    // rejections / global errors) into the PERSISTENT log, so a failure that
+    // tears down the mobile WebView is still readable afterwards in "Show log".
+    // (A true OOM process-kill is NOT a JS error and cannot be caught anywhere;
+    // this surfaces everything that IS a catchable error.)
+    const stopDiag = this.installRunDiagnostics();
+    void this.status.appendNow(
+      "info",
+      `[diag] run start — targets=${targets.length}`
+    );
     try {
       await this.withSuppressedEvents(async () => {
         for (const target of targets) {
@@ -233,15 +243,52 @@ export default class GoogleDriveSyncPlugin extends Plugin {
           }
         }
       });
+    } catch (e) {
+      // Anything the engine didn't catch lands here — flush it durably and
+      // surface it, instead of failing silently.
+      await this.status.appendNow("error", `[diag] runSync threw: ${errString(e)}`);
+      this.status.finish("error", t("engineNoticePrefix", { message: errString(e) }));
+      if (showNotice) {
+        new Notice(t("engineNoticePrefix", { message: errString(e) }), 15000);
+      }
+      log.error("runSync failed", e);
     } finally {
       this.running = false;
       window.clearInterval(ticker);
+      stopDiag();
+      void this.status.appendNow("info", "[diag] run end");
       // The final status emit (finish()) fired while `running` was still true,
       // so subscribers that gate on isSyncing() (sync button, status bar) saw
       // the stale value. Notify once more now that the flag has cleared, so the
       // button re-enables and the status bar settles on the final state.
       this.status.notify();
     }
+  }
+
+  /**
+   * While a sync runs, route global unhandled errors / promise rejections into
+   * the PERSISTENT sync log (immediately flushed) so a failure that tears down
+   * the mobile WebView is still readable afterwards. Returns a cleanup fn.
+   */
+  private installRunDiagnostics(): () => void {
+    const onRejection = (ev: PromiseRejectionEvent) => {
+      void this.status.appendNow(
+        "error",
+        `[diag] unhandledrejection: ${errString(ev.reason)}`
+      );
+    };
+    const onError = (ev: ErrorEvent) => {
+      void this.status.appendNow(
+        "error",
+        `[diag] window error: ${ev.message} @ ${ev.filename}:${ev.lineno}`
+      );
+    };
+    window.addEventListener("unhandledrejection", onRejection);
+    window.addEventListener("error", onError);
+    return () => {
+      window.removeEventListener("unhandledrejection", onRejection);
+      window.removeEventListener("error", onError);
+    };
   }
 
   /** Is a sync currently running? (for the UI). */
@@ -653,6 +700,18 @@ function generateTargetId(): string {
 /** Resolves after `ms` milliseconds (used to yield between sync batches). */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/** Best-effort string form of an unknown thrown value, including a stack. */
+function errString(e: unknown): string {
+  if (e instanceof Error) {
+    return e.stack ? `${e.message}\n${e.stack}` : e.message;
+  }
+  try {
+    return String(e);
+  } catch {
+    return "<unstringifiable error>";
+  }
 }
 
 /** Removes fields from earlier plugin versions that no longer belong here. */

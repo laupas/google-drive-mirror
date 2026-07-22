@@ -1,4 +1,4 @@
-import { requestUrl } from "obsidian";
+import { Platform, requestUrl } from "obsidian";
 import { DriveFile, DriveFolder } from "./types";
 import { OAuthManager } from "./oauth";
 import { MessageKey, t } from "./i18n";
@@ -40,6 +40,18 @@ const RETRY_BASE_MS = 500;
  * under the cap, and the request wrapper still retries any 429s with backoff.
  */
 const LIST_CONCURRENCY = 16;
+/**
+ * Lower listing fan-out on mobile. Each concurrent `listChildren` holds a parsed
+ * response page (up to 1000 file records) in memory; 16 in flight on a large
+ * Drive pushed the iOS WebView past its memory ceiling and OOM-killed it during
+ * the "Fetching Google Drive" phase. Fewer in-flight pages = a lower peak.
+ */
+const LIST_CONCURRENCY_MOBILE = 4;
+
+/** Listing fan-out for the current platform. */
+function listConcurrency(): number {
+  return Platform.isMobile ? LIST_CONCURRENCY_MOBILE : LIST_CONCURRENCY;
+}
 
 /** Live progress of a recursive `listFiles` run, reported per folder level. */
 export interface ListProgress {
@@ -186,37 +198,44 @@ export class GoogleDriveClient {
     // bounded concurrency: the listing is latency-bound (one round-trip per
     // folder), so listing siblings in parallel is the dominant speed-up on a
     // large Drive. Descendants discovered in a level form the next level.
+    //
+    // MEMORY (mobile/iOS): each folder's children are reduced into
+    // files/folders/nextLevel AS SOON AS its listChildren resolves, and the raw
+    // response page is dropped immediately. We deliberately do NOT collect the
+    // whole level's raw child arrays first (the previous mapPool approach held
+    // every folder-in-level's parsed page at once) — on a wide level that peak,
+    // plus the concurrent response bodies, OOM-killed the WebView. Streaming +
+    // lower mobile concurrency keeps only the growing output resident.
     let level: { id: string; prefix: string }[] = [
       { id: rootFolderId, prefix: "" },
     ];
+    const concurrency = listConcurrency();
 
     while (level.length > 0) {
-      const childrenPerFolder = await mapPool(
-        level,
-        LIST_CONCURRENCY,
-        // My Drive path: no driveId.
-        ({ id }) => this.listChildren(id, undefined)
-      );
-
       const nextLevel: { id: string; prefix: string }[] = [];
-      // Iterate in the original order so relativePath/order stay deterministic.
-      for (let i = 0; i < level.length; i++) {
-        const { prefix } = level[i];
-        for (const f of childrenPerFolder[i]) {
+      await forEachPool(level, concurrency, async ({ id, prefix }) => {
+        const children = await this.listChildren(id, undefined);
+        for (const f of children) {
           const relativePath = prefix ? `${prefix}/${f.name}` : f.name;
           if (f.mimeType === FOLDER_MIME) {
             if (f.trashed) continue;
-            // Emit the folder itself as its own entry AND descend recursively.
             folders.push({ id: f.id, relativePath });
             nextLevel.push({ id: f.id, prefix: relativePath });
           } else {
             files.push({ ...this.mapFile(f), relativePath });
           }
         }
-      }
-      // Report cumulative progress after each fully-listed level, so the UI can
-      // show the listing advancing instead of a single frozen "Fetching…".
-      onProgress?.({ foldersScanned: folders.length, filesFound: files.length });
+        // Report progress as each folder finishes, so a big listing shows steady
+        // movement instead of freezing between whole levels.
+        onProgress?.({
+          foldersScanned: folders.length,
+          filesFound: files.length,
+        });
+      });
+      // Note: order within a level is no longer strictly input-order (folders
+      // are reduced as they complete). relativePath is derived per item from its
+      // own prefix, so paths stay correct; only the array order can vary, which
+      // the reconciler (keyed by relativePath) does not depend on.
       level = nextLevel;
     }
     return { files, folders };
@@ -817,4 +836,36 @@ export async function mapPool<T, R>(
   }
   await Promise.all(runners);
   return results;
+}
+
+/**
+ * Like `mapPool`, but does NOT collect return values — the worker consumes each
+ * item's result as it completes (via its own side effects). This keeps memory
+ * bounded: nothing is retained across items, unlike `mapPool`'s full results
+ * array. Used by the BFS listing to reduce each folder's children immediately
+ * instead of holding a whole level's parsed pages. Bounded concurrency; every
+ * item runs exactly once. Order of completion is not guaranteed.
+ *
+ * Exported for unit testing.
+ */
+export async function forEachPool<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>
+): Promise<void> {
+  if (items.length === 0) return;
+  const n = Math.max(1, Math.min(limit, items.length));
+  let next = 0;
+  const runners: Promise<void>[] = [];
+  for (let i = 0; i < n; i++) {
+    runners.push(
+      (async () => {
+        while (next < items.length) {
+          const idx = next++;
+          await worker(items[idx]);
+        }
+      })()
+    );
+  }
+  await Promise.all(runners);
 }
