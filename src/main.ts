@@ -48,6 +48,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   private statusBarEl: HTMLElement | null = null;
   /** Paths written by the sync itself — ignore their events. */
   private suppressedPaths = new Set<string>();
+  /** Monotonic counter for unique per-run IndexedDB names (see createRemoteStore). */
+  private remoteDbSeq = 0;
 
   async onload(): Promise<void> {
     // Couple the UI language to the Obsidian setting (fallback English).
@@ -56,13 +58,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     setDebugLogging(this.settings.debugLogging);
 
     this.oauth = new OAuthManager(this.settings);
-    this.drive = new GoogleDriveClient(
-      this.oauth,
-      undefined,
-      // Mobile listing fan-out is user-configurable (memory tuning); desktop
-      // stays at the fixed higher value (no memory pressure there).
-      () => (Platform.isMobile ? this.settings.mobileListConcurrency : 16)
-    );
+    this.drive = new GoogleDriveClient(this.oauth);
 
     this.storage = new PluginStorage(this.app.vault, this.manifest.id);
 
@@ -194,8 +190,15 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     // gds-remote-<id>). Falls back to in-memory only if IndexedDB is absent.
     if (indexedDbAvailable()) {
       try {
-        const store = await IndexedDbRemoteStore.open(`gds-remote-${targetId}`);
-        log.info(`Remote store: IndexedDB (gds-remote-${targetId})`);
+        // UNIQUE db name per run. dispose() deletes the DB asynchronously; a
+        // fast auto-resume (next batch) would otherwise re-open the SAME name
+        // while the previous delete is still pending/blocked → transactions on a
+        // half-torn-down DB fail ("without an in-progress transaction"). A fresh
+        // name each run sidesteps that race entirely.
+        this.remoteDbSeq++;
+        const name = `gds-remote-${targetId}-${this.remoteDbSeq}`;
+        const store = await IndexedDbRemoteStore.open(name);
+        log.info(`Remote store: IndexedDB (${name})`);
         return store;
       } catch (e) {
         log.warn("IndexedDB nicht verfügbar, nutze In-Memory-Store:", e);

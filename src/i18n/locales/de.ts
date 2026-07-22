@@ -135,9 +135,6 @@ export const de: Partial<Messages> = {
   debugLoggingName: "Debug-Logging",
   debugLoggingDesc:
     "Schreibt ausführliche Info-Meldungen in die Developer-Console. Nur zur Fehlersuche aktivieren.",
-  mobileListConcurrencyName: "Abruf-Parallelität (mobil)",
-  mobileListConcurrencyDesc:
-    "Wie viele Drive-Ordner beim Auflisten parallel abgerufen werden (1–16). Niedriger ist bei großen Drives sicherer, aber langsamer; höher ist schneller, braucht aber mehr Speicher und kann die App bei einer großen Synchronisierung zum Absturz bringen. Standard 4. Betrifft nur Mobilgeräte.",
 
   // ---- Einstellungen: Aktionen & Status ----
   headingActionsStatus: "4. Aktionen & Status",

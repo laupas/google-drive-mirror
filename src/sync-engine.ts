@@ -388,7 +388,8 @@ export class SyncEngine {
         local,
         base,
         store,
-        summary
+        summary,
+        remoteCount
       );
 
       // When the run was capped (mobile batch limit), the file transfers are
@@ -554,7 +555,8 @@ export class SyncEngine {
     local: Map<string, LocalFile>,
     base: Map<string, SyncStateEntry>,
     store: RemoteStore,
-    summary: SyncSummary
+    summary: SyncSummary,
+    remoteCount: number
   ): Promise<{ capped: boolean }> {
     const perRunCap = this.perRunActionCap();
     const neverDeleteRemote = this.target.neverDeleteRemote;
@@ -562,6 +564,13 @@ export class SyncEngine {
     let done = 0;
     let sinceCheckpoint = 0;
     let capped = false;
+    // Approximate progress total: the reconcile is streamed, so we don't know
+    // the exact action count up front. Use the remote file count as a stable
+    // denominator (plus any local-only files added in phase 2). It's an upper
+    // bound-ish estimate (unchanged files reconcile to noop and finish
+    // instantly), but gives the user a real sense of scale — "(12 / 8399)".
+    let total = remoteCount;
+    this.status.setTotal(total);
 
     // Execute one batch of already-reconciled actions through the bounded pool,
     // updating progress/checkpoint. Returns false if the cap was hit.
@@ -597,7 +606,7 @@ export class SyncEngine {
           log.error("Aktion fehlgeschlagen:", detail, e);
         }
         done++;
-        this.status.update(describeAction(action, `(${done})`), done);
+        this.status.update(describeAction(action, `(${done}/${total})`), done, total);
         if (++sinceCheckpoint >= CHECKPOINT_EVERY) {
           sinceCheckpoint = 0;
           await this.checkpoint();
@@ -637,6 +646,12 @@ export class SyncEngine {
     const absent: string[] = [];
     for (const p of local.keys()) if (!seen.has(p)) absent.push(p);
     for (const p of base.keys()) if (!seen.has(p) && !local.has(p)) absent.push(p);
+    // Extend the progress total to cover phase-2 paths (local-only uploads +
+    // remote-deletions) that weren't part of the remote count.
+    if (absent.length > 0) {
+      total += absent.length;
+      this.status.setTotal(total);
+    }
 
     for (let i = 0; i < absent.length && !capped; i += RECONCILE_BATCH) {
       const slicePaths = absent.slice(i, i + RECONCILE_BATCH);

@@ -108,17 +108,6 @@ export interface PluginSettings {
    * so the console only shows errors (Obsidian guideline).
    */
   debugLogging: boolean;
-
-  /**
-   * How many Drive folders are listed in parallel DURING THE FETCH PHASE ON
-   * MOBILE. Each concurrent request holds a parsed response page (up to 1000
-   * file records) in memory; too many at once on a large Drive pushes the iOS
-   * WebView past its memory limit and the OS silently kills it ("Fetching
-   * Google Drive" crash). Lower = safer but slower fetch; higher = faster fetch
-   * but more memory. Desktop is unaffected (fixed higher value, no memory
-   * pressure). Default 4.
-   */
-  mobileListConcurrency: number;
 }
 
 /**
@@ -232,7 +221,6 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   localDebounceMs: 2500,
   logRetentionHours: 24,
   debugLogging: false,
-  mobileListConcurrency: 4,
 };
 
 /** Builds a fresh, empty sync target with sensible defaults. */

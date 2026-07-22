@@ -138,9 +138,6 @@ export const fr: Partial<Messages> = {
   debugLoggingName: "Journalisation de débogage",
   debugLoggingDesc:
     "Écrit des messages d'information détaillés dans la console de développement. À activer uniquement pour le dépannage.",
-  mobileListConcurrencyName: "Parallélisme de récupération (mobile)",
-  mobileListConcurrencyDesc:
-    "Nombre de dossiers Drive récupérés en parallèle lors du listage (1–16). Une valeur plus basse est plus sûre sur les gros Drive mais plus lente ; une valeur plus élevée est plus rapide mais consomme plus de mémoire et peut faire planter l'application lors d'une grosse synchronisation. Par défaut 4. N'affecte que le mobile.",
 
   // ---- Paramètres : actions & état ----
   headingActionsStatus: "4. Actions & état",

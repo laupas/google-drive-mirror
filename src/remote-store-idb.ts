@@ -69,17 +69,6 @@ export class IndexedDbRemoteStore implements RemoteStore {
     });
   }
 
-  private tx(mode: IDBTransactionMode): IDBObjectStore {
-    if (!this.db) throw new Error("RemoteStore not open");
-    return this.db.transaction(STORE, mode).objectStore(STORE);
-  }
-
-  private reqP<T>(req: IDBRequest<T>): Promise<T> {
-    return new Promise((resolve, reject) => {
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-  }
 
   async clear(): Promise<void> {
     if (!this.db) throw new Error("RemoteStore not open");
@@ -129,10 +118,26 @@ export class IndexedDbRemoteStore implements RemoteStore {
     });
   }
 
+  /**
+   * Fetch one raw record in a self-contained transaction. The request is issued
+   * inside the promise executor (synchronous with tx creation), never after an
+   * await — so the transaction can't auto-commit before the request runs
+   * ("without an in-progress transaction"). All single-record reads go through
+   * this rather than the tx()+reqP two-step, which was fragile on WebKit.
+   */
+  private rawGet(path: string): Promise<StoredRecord | undefined> {
+    if (!this.db) throw new Error("RemoteStore not open");
+    return new Promise((resolve, reject) => {
+      const req = this.db!.transaction(STORE, "readonly")
+        .objectStore(STORE)
+        .get(path);
+      req.onsuccess = () => resolve(req.result as StoredRecord | undefined);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
   async get(path: string): Promise<RemoteRecord | undefined> {
-    const r = (await this.reqP(this.tx("readonly").get(path))) as
-      | StoredRecord
-      | undefined;
+    const r = await this.rawGet(path);
     return r && !r.ambiguous ? this.strip(r) : undefined;
   }
 
@@ -141,9 +146,7 @@ export class IndexedDbRemoteStore implements RemoteStore {
   }
 
   async isAmbiguous(path: string): Promise<boolean> {
-    const r = (await this.reqP(this.tx("readonly").get(path))) as
-      | StoredRecord
-      | undefined;
+    const r = await this.rawGet(path);
     return !!r?.ambiguous;
   }
 
@@ -189,12 +192,14 @@ export class IndexedDbRemoteStore implements RemoteStore {
   }
 
   async hasSubtreeFiles(folderPath: string): Promise<boolean> {
+    if (!this.db) throw new Error("RemoteStore not open");
     const prefix = folderPath + "/";
     // Key range [prefix, prefix + ￿) covers all descendants by path order.
     const range = idbKeyRange().bound(prefix, prefix + "￿", false, true);
-    const store = this.tx("readonly");
     return new Promise((resolve, reject) => {
-      const req = store.openCursor(range);
+      const req = this.db!.transaction(STORE, "readonly")
+        .objectStore(STORE)
+        .openCursor(range);
       req.onerror = () => reject(req.error);
       req.onsuccess = () => {
         const cursor = req.result;
@@ -236,9 +241,11 @@ export class IndexedDbRemoteStore implements RemoteStore {
   }
 
   private cursorEach(fn: (r: StoredRecord) => void): Promise<void> {
-    const store = this.tx("readonly");
+    if (!this.db) throw new Error("RemoteStore not open");
     return new Promise((resolve, reject) => {
-      const req = store.openCursor();
+      const req = this.db!.transaction(STORE, "readonly")
+        .objectStore(STORE)
+        .openCursor();
       req.onerror = () => reject(req.error);
       req.onsuccess = () => {
         const cursor = req.result;

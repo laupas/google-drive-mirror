@@ -237,25 +237,6 @@ export class SettingsTab extends PluginSettingTab {
         })
       );
 
-    // Mobile-only: fetch-phase parallelism (memory vs. speed trade-off). Only
-    // shown on mobile, where it matters (desktop has no memory pressure).
-    if (Platform.isMobile) {
-      new Setting(containerEl)
-        .setName(t("mobileListConcurrencyName"))
-        .setDesc(t("mobileListConcurrencyDesc"))
-        .addText((c) =>
-          c
-            .setValue(String(s.mobileListConcurrency))
-            .onChange(async (v) => {
-              // Clamp to a safe range: 1..16. Higher = faster fetch but more
-              // memory (risk of an OOM crash on large Drives); lower = safer.
-              const n = Math.max(1, Math.min(16, parseInt(v, 10) || 4));
-              s.mobileListConcurrency = n;
-              await this.plugin.saveSettings();
-            })
-        );
-    }
-
     // ---- 4. Actions & status ----
     new Setting(containerEl).setName(t("headingActionsStatus")).setHeading();
 
