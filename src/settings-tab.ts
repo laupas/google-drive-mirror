@@ -227,16 +227,6 @@ export class SettingsTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName(t("preventSleepName"))
-      .setDesc(t("preventSleepDesc"))
-      .addToggle((c) =>
-        c.setValue(s.preventSleepDuringSync).onChange(async (v) => {
-          s.preventSleepDuringSync = v;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
       .setName(t("debugLoggingName"))
       .setDesc(t("debugLoggingDesc"))
       .addToggle((c) =>

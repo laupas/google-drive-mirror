@@ -136,9 +136,6 @@ export const it: Partial<Messages> = {
   debugLoggingName: "Log di debug",
   debugLoggingDesc:
     "Scrive messaggi informativi dettagliati nella console per sviluppatori. Abilita solo per la risoluzione dei problemi.",
-  preventSleepName: "Mantieni il dispositivo attivo durante la sincronizzazione",
-  preventSleepDesc:
-    "Su dispositivi mobili mantiene lo schermo attivo mentre una sincronizzazione è in corso, così il dispositivo non la interrompe. Nessun effetto sul desktop.",
 
   // ---- Impostazioni: azioni & stato ----
   headingActionsStatus: "4. Azioni & stato",
