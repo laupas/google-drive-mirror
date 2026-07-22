@@ -1,4 +1,4 @@
-import { Notice, Platform, TFile, TFolder, Vault, normalizePath } from "obsidian";
+import { Notice, TFile, TFolder, Vault, normalizePath } from "obsidian";
 import type { FileManager } from "obsidian";
 import { GoogleDriveClient } from "./drive-client";
 import { LocalFile, reconcile, reconcileFolders } from "./reconciler";
@@ -30,40 +30,8 @@ const CHECKPOINT_EVERY = 50;
  * How many file transfers (upload/download/delete) run concurrently. Network
  * I/O parallelizes well; kept moderate to stay within Google's rate limits
  * (transient 429s are retried by the Drive client's request wrapper).
- *
- * On mobile this is lowered further (see `transferConcurrency()`): iOS gives the
- * WebView a tight memory budget and kills the process (jetsam/OOM) — silently,
- * no exception, nothing logged — once it's exceeded. Each in-flight transfer
- * holds a whole file in RAM (an upload even builds a second full-file copy in
- * `multipartUpload`), so 6 parallel large transfers can blow the budget.
  */
 const MAX_CONCURRENCY = 6;
-/** Lower ceiling on mobile (see MAX_CONCURRENCY) — fewer buffers resident. */
-const MAX_CONCURRENCY_MOBILE = 2;
-
-/**
- * Upper bound on the SUM of file sizes transferred concurrently. This caps peak
- * memory regardless of the count ceiling: many tiny files still run in parallel,
- * but a single large file (or a couple of medium ones) runs alone. The mobile
- * value is deliberately conservative because uploads transiently need ~2× the
- * file size (original buffer + the multipart body copy).
- *
- * A single file larger than the budget is never blocked — it just runs on its
- * own (the pool admits it when nothing else is in flight); the budget only
- * limits how many transfers OVERLAP.
- */
-const MAX_INFLIGHT_BYTES_MOBILE = 24 * 1024 * 1024; // 24 MiB
-const MAX_INFLIGHT_BYTES_DESKTOP = 256 * 1024 * 1024; // 256 MiB
-
-/** Concurrency ceiling for the current platform (mobile is memory-constrained). */
-function transferConcurrency(): number {
-  return Platform.isMobile ? MAX_CONCURRENCY_MOBILE : MAX_CONCURRENCY;
-}
-
-/** In-flight byte budget for the current platform. */
-function inflightByteBudget(): number {
-  return Platform.isMobile ? MAX_INFLIGHT_BYTES_MOBILE : MAX_INFLIGHT_BYTES_DESKTOP;
-}
 
 /**
  * Frozen copy of the scope-relevant settings fields for the duration of ONE
@@ -197,17 +165,8 @@ export class SyncEngine {
       this.status.update(t("engineReadingLocal"), 0);
       const local = await this.collectLocal();
       const localFolders = this.collectLocalFolders(local.keys());
-      // DIAGNOSTICS: flush a breadcrumb after each major phase so, if the
-      // mobile WebView is torn down mid-run (no JS error, execution just
-      // stops), the persistent log shows exactly which phase it died in.
-      void this.status.appendNow(
-        "info",
-        `[diag] local collected — files=${local.size}`
-      );
 
       this.status.update(t("engineFetchingDrive"), 0);
-      // Throttle the listing breadcrumb so it flushes at most ~once/2s.
-      let lastListCrumbMs = 0;
       const listing = await this.drive.listFiles(
         this.active.driveFolderId,
         this.active.driveSharedId || undefined,
@@ -221,19 +180,7 @@ export class SyncEngine {
             }),
             0
           );
-          const now = Date.now();
-          if (now - lastListCrumbMs >= 2000) {
-            lastListCrumbMs = now;
-            void this.status.appendNow(
-              "info",
-              `[diag] listing — folders=${foldersScanned}, files=${filesFound}`
-            );
-          }
         }
-      );
-      void this.status.appendNow(
-        "info",
-        `[diag] drive listed — folders=${listing.folders.length}, files=${listing.files.length}`
       );
       log.info(
         `Drive listing done: ${listing.folders.length} folders, ${listing.files.length} files`
@@ -362,13 +309,6 @@ export class SyncEngine {
       if (work.length === 0) {
         this.status.append("info", t("engineNoChanges"));
       }
-      // DIAGNOSTICS: reconcile finished — flush action/folder-action counts so
-      // the persistent log shows we reached the transfer phase and how much
-      // work it produced.
-      void this.status.appendNow(
-        "info",
-        `[diag] reconciled — fileActions=${work.length}, folderActions=${folderActions.length}`
-      );
 
       // 1) CREATE folders (before files, so target folders exist).
       //    Sorted by path depth: parent folders first.
@@ -378,10 +318,6 @@ export class SyncEngine {
             a.type === "createLocalFolder" || a.type === "createRemoteFolder"
         )
         .sort((a, b) => depth(a.path) - depth(b.path));
-      void this.status.appendNow(
-        "info",
-        `[diag] creating folders — count=${folderCreates.length}`
-      );
       for (const fa of folderCreates) {
         try {
           await this.applyFolderAction(fa, remoteFolders, summary);
@@ -397,8 +333,6 @@ export class SyncEngine {
         }
       }
 
-      void this.status.appendNow("info", "[diag] folders created");
-
       // 2a) noop actions only refresh the base (no I/O) — handle them quickly
       //     and sequentially first.
       for (const action of actions) {
@@ -406,7 +340,6 @@ export class SyncEngine {
           await this.applyAction(action, local, remote, summary);
         }
       }
-      void this.status.appendNow("info", "[diag] transfer phase start");
 
       // 2b) Real file actions run through a bounded concurrency pool. File
       //     transfers are independent (distinct paths → distinct state keys), so
@@ -416,69 +349,37 @@ export class SyncEngine {
       //     interruption costs only the last few actions.
       let done = 0;
       let sinceCheckpoint = 0;
-      const concurrency = transferConcurrency();
-      const byteBudget = inflightByteBudget();
-      log.debug(
-        `Transfer phase: ${work.length} actions, concurrency=${concurrency}, ` +
-          `inflightBudget=${(byteBudget / (1024 * 1024)).toFixed(0)}MiB, ` +
-          `mobile=${Platform.isMobile}`
-      );
-      let inflightBytes = 0;
-      await runBytePool(
-        work,
-        concurrency,
-        byteBudget,
-        (action) => actionBytes(action, local, remote),
-        async (action) => {
-          const bytes = actionBytes(action, local, remote);
-          inflightBytes += bytes;
-          log.debug(
-            `▶ ${action.type} ${pathOfAction(action)} ` +
-              `${(bytes / (1024 * 1024)).toFixed(2)}MiB ` +
-              `inflight=${(inflightBytes / (1024 * 1024)).toFixed(2)}MiB`
+      await runPool(work, MAX_CONCURRENCY, async (action) => {
+        try {
+          await this.applyAction(action, local, remote, summary);
+          this.status.append(
+            "info",
+            t("engineActionDone", { action: describeAction(action) })
           );
-          try {
-            await this.applyAction(action, local, remote, summary);
-            this.status.append(
-              "info",
-              t("engineActionDone", { action: describeAction(action) })
-            );
-          } catch (e) {
-            const detail = t("engineActionError", {
-              type: action.type,
-              path: pathOfAction(action),
-              error: errMsg(e),
-            });
-            summary.errors.push(detail);
-            this.status.append("error", detail);
-            log.error("Aktion fehlgeschlagen:", detail, e);
-          } finally {
-            // Release the reserved bytes even on error, so a failed transfer
-            // doesn't permanently shrink the in-flight budget.
-            inflightBytes -= bytes;
-          }
-          // Progress + checkpoint after each completed action. The count is
-          // placed at the FRONT of the line (right after the symbol) via
-          // describeAction, so it reads "↓ (12/340) Download …".
-          done++;
-          this.status.update(
-            describeAction(action, `(${done}/${work.length})`),
-            done,
-            work.length
-          );
-          if (++sinceCheckpoint >= CHECKPOINT_EVERY) {
-            sinceCheckpoint = 0;
-            await this.checkpoint();
-            // DIAGNOSTICS: durable progress marker every CHECKPOINT_EVERY
-            // transfers, so a mid-transfer WebView teardown leaves a trail
-            // showing how far the transfer phase got.
-            void this.status.appendNow(
-              "info",
-              `[diag] transfers done=${done}/${work.length}`
-            );
-          }
+        } catch (e) {
+          const detail = t("engineActionError", {
+            type: action.type,
+            path: pathOfAction(action),
+            error: errMsg(e),
+          });
+          summary.errors.push(detail);
+          this.status.append("error", detail);
+          log.error("Aktion fehlgeschlagen:", detail, e);
         }
-      );
+        // Progress + checkpoint after each completed action. The count is
+        // placed at the FRONT of the line (right after the symbol) via
+        // describeAction, so it reads "↓ (12/340) Download …".
+        done++;
+        this.status.update(
+          describeAction(action, `(${done}/${work.length})`),
+          done,
+          work.length
+        );
+        if (++sinceCheckpoint >= CHECKPOINT_EVERY) {
+          sinceCheckpoint = 0;
+          await this.checkpoint();
+        }
+      });
 
       // 3) DELETE / KEEP folders (after files; deepest first).
       //    keepRemoteFolder performs no Drive operation, only state — harmless in
@@ -1129,113 +1030,8 @@ export async function runPool<T>(
   await Promise.all(runners);
 }
 
-/**
- * Like `runPool`, but additionally caps the SUM of in-flight item sizes to
- * `byteBudget`. An item is admitted when EITHER nothing is in flight (so a
- * single item larger than the budget still runs — alone) OR admitting it keeps
- * the in-flight total within budget, AND the count ceiling `limit` is not
- * exceeded. Order of completion is not guaranteed; every item runs exactly once.
- *
- * This bounds peak memory on constrained platforms (iOS): each transfer holds a
- * whole file in RAM, so limiting by count alone lets a few large files exceed
- * the OS memory budget and get the process silently OOM-killed. A worker that
- * throws is NOT caught here — callers handle per-item errors inside the worker.
- *
- * Exported for unit testing.
- */
-export async function runBytePool<T>(
-  items: T[],
-  limit: number,
-  byteBudget: number,
-  sizeOf: (item: T) => number,
-  worker: (item: T) => Promise<void>
-): Promise<void> {
-  if (items.length === 0) return;
-  const maxConcurrent = Math.max(1, limit);
-
-  let next = 0;
-  let inflightCount = 0;
-  let inflightBytes = 0;
-  // Resolvers of workers parked because admitting them would break a limit.
-  // Each is woken whenever an in-flight transfer completes and frees capacity.
-  const waiters: Array<() => void> = [];
-
-  const canAdmit = (bytes: number): boolean => {
-    if (inflightCount >= maxConcurrent) return false;
-    // Always admit when nothing is in flight (so an oversized single item runs).
-    if (inflightCount === 0) return true;
-    return inflightBytes + bytes <= byteBudget;
-  };
-
-  const wakeWaiters = (): void => {
-    // Wake all parked workers; each re-checks admission and re-parks if needed.
-    // Simpler than tracking which specific waiter now fits, and correct because
-    // admission is re-evaluated on wake.
-    const woken = waiters.splice(0, waiters.length);
-    for (const w of woken) w();
-  };
-
-  const runOne = async (item: T): Promise<void> => {
-    const bytes = Math.max(0, sizeOf(item));
-    // Wait until this item can be admitted without breaking count/byte limits.
-    while (!canAdmit(bytes)) {
-      await new Promise<void>((resolve) => waiters.push(resolve));
-    }
-    inflightCount++;
-    inflightBytes += bytes;
-    try {
-      await worker(item);
-    } finally {
-      inflightCount--;
-      inflightBytes -= bytes;
-      wakeWaiters();
-    }
-  };
-
-  // Launch a runner per concurrency slot; each pulls items until drained.
-  const runners: Promise<void>[] = [];
-  for (let i = 0; i < maxConcurrent; i++) {
-    runners.push(
-      (async () => {
-        while (next < items.length) {
-          const idx = next++;
-          await runOne(items[idx]);
-        }
-      })()
-    );
-  }
-  await Promise.all(runners);
-}
-
 function pathOfAction(a: SyncAction): string {
   return "path" in a ? a.path : "?";
-}
-
-/**
- * Estimated number of bytes a transfer action moves — used only to size the
- * in-flight memory budget (NOT for correctness). Upload/conflict-upload read the
- * local file; download/conflict-download fetch the Drive file. Delete/noop move
- * no content. Falls back to 0 when a size is unknown, so a missing size never
- * blocks a transfer.
- */
-function actionBytes(
-  a: SyncAction,
-  local: Map<string, LocalFile>,
-  remote: Map<string, DriveFile>
-): number {
-  switch (a.type) {
-    case "upload":
-      return local.get(a.path)?.size ?? 0;
-    case "download":
-      return remote.get(a.path)?.size ?? 0;
-    case "conflict":
-      return a.winner === "local"
-        ? local.get(a.path)?.size ?? 0
-        : remote.get(a.path)?.size ?? 0;
-    default:
-      // deleteLocal / deleteRemote / keepRemoteDropLocal / noop: no content.
-      return 0;
-  }
 }
 
 /**
