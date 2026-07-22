@@ -71,7 +71,13 @@ const context = await esbuild.context({
 
 if (prod) {
   await context.rebuild();
-  process.exit(0);
+  // Copy the static assets EXPLICITLY (and synchronously) here rather than
+  // relying on the `onEnd` callback: `process.exit(0)` can fire before the
+  // async `onEnd` hook runs, leaving `.build/` without manifest.json/styles.css
+  // (and racily even without main.js). In CI that produced a release with no
+  // installable assets. Copying here makes the production build deterministic.
+  copyStaticAssets();
+  await context.dispose();
 } else {
   await context.watch();
 }
