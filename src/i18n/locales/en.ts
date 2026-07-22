@@ -16,8 +16,7 @@ export const en = {
 
   // ---- Status bar (main.ts) ----
   statusBarReady: "Drive: ready",
-  statusBarRunning: "Drive:{progress} {message}",
-  statusBarRunningProgress: " {current}/{total}",
+  statusBarRunning: "Drive: {message}",
   statusBarDone: "Drive: {message}",
   statusBarError: "Drive: {message}",
   statusBarTooltip: "Google Drive Mirror — click to sync",
@@ -177,8 +176,7 @@ export const en = {
 
   // ---- Live status line (settings-tab.ts) ----
   statusLineReady: "Ready.",
-  statusLineRunning: "{message}{progress} · {secs}s",
-  statusLineRunningProgress: " ({current}/{total})",
+  statusLineRunning: "{message} · {secs}s",
   statusLineDone: "{message}",
   statusLineError: "{message}",
 

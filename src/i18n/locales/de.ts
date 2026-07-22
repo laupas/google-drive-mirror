@@ -13,8 +13,7 @@ export const de: Partial<Messages> = {
 
   // ---- Statusleiste ----
   statusBarReady: "Drive: bereit",
-  statusBarRunning: "Drive:{progress} {message}",
-  statusBarRunningProgress: " {current}/{total}",
+  statusBarRunning: "Drive: {message}",
   statusBarDone: "Drive: {message}",
   statusBarError: "Drive: {message}",
   statusBarTooltip: "Google Drive Mirror — klicken zum Synchronisieren",
@@ -180,8 +179,7 @@ export const de: Partial<Messages> = {
 
   // ---- Live-Statuszeile ----
   statusLineReady: "Bereit.",
-  statusLineRunning: "{message}{progress} · {secs}s",
-  statusLineRunningProgress: " ({current}/{total})",
+  statusLineRunning: "{message} · {secs}s",
   statusLineDone: "{message}",
   statusLineError: "{message}",
 

@@ -7,7 +7,7 @@
  * Format: AAA.
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { requestUrl } from "obsidian";
 import { GoogleDriveClient, mapPool, buildSubtree } from "../../src/drive-client";
 import { OAuthManager } from "../../src/oauth";
@@ -793,5 +793,78 @@ describe("GoogleDriveClient — retry with backoff", () => {
     // Assert: 1 initial + 4 retries = 5 attempts.
     expect(requestImpl).toHaveBeenCalledTimes(5);
     vi.useRealTimers();
+  });
+});
+
+describe("GoogleDriveClient — native fetch download path", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  function okFetch(body = "hi"): Response {
+    return {
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new TextEncoder().encode(body).buffer,
+    } as unknown as Response;
+  }
+  function statusFetch(status: number): Response {
+    return {
+      ok: false,
+      status,
+      arrayBuffer: async () => new ArrayBuffer(0),
+    } as unknown as Response;
+  }
+
+  it("uses native fetch when it succeeds (no requestUrl)", async () => {
+    const fetchMock = vi.fn(async () => okFetch("data"));
+    globalThis.fetch = fetchMock as never;
+    const c = client(); // default impl → fetch is attempted
+
+    const buf = await c.downloadFile("d1");
+
+    expect(new TextDecoder().decode(buf)).toBe("data");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mockedRequestUrl).not.toHaveBeenCalled();
+    expect(c.downloadTransport()).toBe("fetch");
+  });
+
+  it("retries a transient 5xx on the fetch path, then succeeds", async () => {
+    vi.useFakeTimers();
+    let n = 0;
+    globalThis.fetch = vi.fn(async () => {
+      n++;
+      return n === 1 ? statusFetch(503) : okFetch("ok");
+    }) as never;
+    const c = client();
+
+    const p = c.downloadFile("d1");
+    await vi.runAllTimersAsync();
+    const buf = await p;
+
+    expect(new TextDecoder().decode(buf)).toBe("ok");
+    expect(c.downloadTransport()).toBe("fetch"); // stayed on fetch
+    expect(mockedRequestUrl).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("falls back to requestUrl when the FIRST fetch throws (CORS/unavailable)", async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    }) as never;
+    mockedRequestUrl.mockResolvedValue({
+      status: 200,
+      text: "",
+      json: {},
+      arrayBuffer: new TextEncoder().encode("viaRequestUrl").buffer,
+    } as never);
+    const c = client();
+
+    const buf = await c.downloadFile("d1");
+
+    expect(new TextDecoder().decode(buf)).toBe("viaRequestUrl");
+    expect(mockedRequestUrl).toHaveBeenCalled();
+    expect(c.downloadTransport()).toBe("requestUrl");
   });
 });

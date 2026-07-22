@@ -921,17 +921,12 @@ export class SettingsTab extends PluginSettingTab {
     let label = t("statusLineReady");
     if (p.phase === "running") {
       this.statusEl.addClass("is-running");
-      const progress =
-        p.total > 0
-          ? t("statusLineRunningProgress", {
-              current: p.current,
-              total: p.total,
-            })
-          : "";
+      // The message already carries the "(done/total)" count at its start (the
+      // engine builds it via describeAction), so we do NOT render the count a
+      // second time here — that produced the duplicate "(x/y) … (x/y)".
       const secs = p.startedMs ? Math.round((Date.now() - p.startedMs) / 1000) : 0;
       label = `⏳ ${t("statusLineRunning", {
         message: p.message,
-        progress,
         secs,
       })}`;
     } else if (p.phase === "done") {

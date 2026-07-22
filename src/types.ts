@@ -114,7 +114,7 @@ export interface PluginSettings {
    * run, resuming on the next run until caught up. Keeps peak memory bounded on
    * constrained devices (the iOS OOM guard). When off, a run processes
    * everything in one pass (faster on capable devices, but can crash a very
-   * large first sync on mobile). Default on.
+   * large first sync on mobile). Default off.
    */
   batchEnabled: boolean;
   /**
@@ -235,11 +235,18 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   localDebounceMs: 2500,
   logRetentionHours: 24,
   debugLogging: false,
-  batchEnabled: true,
+  batchEnabled: false,
   batchSize: 400,
 };
 
 /** Builds a fresh, empty sync target with sensible defaults. */
+/**
+ * Ignore patterns a freshly created target starts with. Excludes Windows
+ * executables and the contents of any `.git` repository (a `.git` folder at any
+ * depth) from syncing. The user can edit or clear these per target.
+ */
+export const DEFAULT_IGNORE_PATTERNS = "*.exe, **/.git/**";
+
 export function newTarget(id: string, name: string): SyncTarget {
   return {
     id,
@@ -249,7 +256,7 @@ export function newTarget(id: string, name: string): SyncTarget {
     driveSharedId: "",
     localFolder: "",
     allowedExtensions: "",
-    ignorePatterns: "",
+    ignorePatterns: DEFAULT_IGNORE_PATTERNS,
     excludeFolders: "",
     neverDeleteRemote: false,
   };

@@ -379,14 +379,10 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     switch (p.phase) {
       case "running": {
         icon = "⏳";
-        const progress =
-          p.total > 0
-            ? t("statusBarRunningProgress", {
-                current: p.current,
-                total: p.total,
-              })
-            : "";
-        text = t("statusBarRunning", { progress, message: p.message });
+        // The message already carries the "(done/total)" count at its start (the
+        // engine builds it via describeAction), so we do NOT render the count a
+        // second time here — that produced the duplicate "(x/y) … (x/y)".
+        text = t("statusBarRunning", { message: p.message });
         break;
       }
       case "done":

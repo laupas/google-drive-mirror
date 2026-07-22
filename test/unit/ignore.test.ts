@@ -6,6 +6,7 @@ import {
   isUnderExcludedFolder,
   parseIgnorePatterns,
 } from "../../src/ignore";
+import { DEFAULT_IGNORE_PATTERNS } from "../../src/types";
 
 describe("parseIgnorePatterns", () => {
   it("splits, trims and drops empty entries", () => {
@@ -183,5 +184,34 @@ describe("isFilteredByTargetSettings", () => {
     expect(isFilteredByTargetSettings("x.md", false, o)).toBe(false);
     // A folder has no extension and must not be flagged by the whitelist.
     expect(isFilteredByTargetSettings("somefolder", true, o)).toBe(false);
+  });
+});
+
+describe("DEFAULT_IGNORE_PATTERNS", () => {
+  const patterns = parseIgnorePatterns(DEFAULT_IGNORE_PATTERNS);
+
+  it("ignores .exe files at any depth", () => {
+    expect(isIgnored("tool.exe", patterns)).toBe(true);
+    expect(isIgnored("bin/tool.exe", patterns)).toBe(true);
+    expect(isIgnored("deep/nested/setup.exe", patterns)).toBe(true);
+  });
+
+  it("ignores .git repository contents (folder + subtree) at any depth", () => {
+    // The .git folder entry itself, at the top level and nested.
+    expect(isIgnored(".git", patterns)).toBe(true);
+    expect(isIgnored("repo/.git", patterns)).toBe(true);
+    // Contents of a .git folder.
+    expect(isIgnored(".git/config", patterns)).toBe(true);
+    expect(isIgnored("repo/.git/HEAD", patterns)).toBe(true);
+    expect(isIgnored("a/b/.git/objects/ab/cd", patterns)).toBe(true);
+  });
+
+  it("does not ignore normal notes or a .gitignore file", () => {
+    expect(isIgnored("note.md", patterns)).toBe(false);
+    expect(isIgnored("bin/readme.md", patterns)).toBe(false);
+    // A file literally named .gitignore is NOT under a .git/ folder.
+    expect(isIgnored(".gitignore", patterns)).toBe(false);
+    // "executable" contains "exe" but is not a .exe file.
+    expect(isIgnored("executable.md", patterns)).toBe(false);
   });
 });

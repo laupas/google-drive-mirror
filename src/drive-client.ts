@@ -405,30 +405,53 @@ export class GoogleDriveClient {
     // WebView may not enforce it like a browser tab). We try fetch first and
     // fall back to requestUrl on ANY failure, so correctness never regresses.
     if (this.fetchDownloadsWork !== false) {
-      try {
-        const token = await this.oauth.getAccessToken();
-        const res = await fetch(url, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const buf = await res.arrayBuffer();
+      // Retry transient failures (thrown network errors, 429, 5xx) with the same
+      // exponential backoff as the requestUrl path — a long mobile sync must
+      // survive network blips without failing a download. A FIRST-call throw is
+      // treated as "fetch unavailable" (CORS/not supported) → disable + fall
+      // back to requestUrl. Once a response has ever come back (even non-OK),
+      // fetch is confirmed working, so later throws/5xx are retried, not fallen
+      // back (falling back would reintroduce the OOM-prone bridge).
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const token = await this.oauth.getAccessToken();
+          const res = await fetch(url, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          // A response (any status) proves fetch reaches Drive → confirm it.
           if (this.fetchDownloadsWork === undefined) {
             this.fetchDownloadsWork = true;
             log.info("Downloads: using native fetch (bypasses requestUrl bridge)");
           }
-          return buf;
-        }
-        // Non-OK HTTP is a real error, not a fetch/CORS problem — let requestUrl
-        // handle it uniformly (it maps status → localized error).
-      } catch (e) {
-        // fetch threw (likely CORS/network in the WebView) — disable it for the
-        // rest of the session and fall back to requestUrl.
-        if (this.fetchDownloadsWork === undefined) {
-          this.fetchDownloadsWork = false;
-          log.warn(
-            "Downloads: native fetch unavailable (falling back to requestUrl):",
-            e
-          );
+          if (res.ok) return await res.arrayBuffer();
+          // Transient HTTP status → back off and retry.
+          if (
+            (res.status === 429 || (res.status >= 500 && res.status < 600)) &&
+            attempt < MAX_RETRIES
+          ) {
+            await sleep(backoffMs(attempt));
+            continue;
+          }
+          // Deterministic non-OK (e.g. 404/403) → let requestUrl produce the
+          // uniform localized error.
+          break;
+        } catch (e) {
+          if (this.fetchDownloadsWork === undefined) {
+            // First-ever attempt threw → fetch is unavailable (CORS/network).
+            this.fetchDownloadsWork = false;
+            log.warn(
+              "Downloads: native fetch unavailable (falling back to requestUrl):",
+              e
+            );
+            break;
+          }
+          // fetch works generally; this is a transient network error → retry.
+          if (attempt < MAX_RETRIES) {
+            await sleep(backoffMs(attempt));
+            continue;
+          }
+          // Exhausted retries → fall through to requestUrl as a last resort.
+          break;
         }
       }
     }

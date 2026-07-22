@@ -13,8 +13,7 @@ export const it: Partial<Messages> = {
 
   // ---- Barra di stato ----
   statusBarReady: "Drive: pronto",
-  statusBarRunning: "Drive:{progress} {message}",
-  statusBarRunningProgress: " {current}/{total}",
+  statusBarRunning: "Drive: {message}",
   statusBarDone: "Drive: {message}",
   statusBarError: "Drive: {message}",
   statusBarTooltip: "Google Drive Mirror — clicca per sincronizzare",
@@ -184,8 +183,7 @@ export const it: Partial<Messages> = {
 
   // ---- Riga di stato in tempo reale ----
   statusLineReady: "Pronto.",
-  statusLineRunning: "{message}{progress} · {secs}s",
-  statusLineRunningProgress: " ({current}/{total})",
+  statusLineRunning: "{message} · {secs}s",
   statusLineDone: "{message}",
   statusLineError: "{message}",
 
