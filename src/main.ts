@@ -16,6 +16,8 @@ import {
 import { log, setDebugLogging } from "./logger";
 import { initLocale, t } from "./i18n";
 import { isIgnored, parseIgnorePatterns } from "./ignore";
+import { InMemoryRemoteStore, RemoteStore } from "./remote-store";
+import { IndexedDbRemoteStore } from "./remote-store-idb";
 
 /** Engine + state store pair for a single sync target. */
 interface TargetRuntime {
@@ -160,7 +162,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
         target,
         this.status,
         this.app.fileManager,
-        () => this.siblingLocalFolders(target.id)
+        () => this.siblingLocalFolders(target.id),
+        undefined, // per-run action cap: engine's platform default
+        () => this.createRemoteStore(target.id)
       );
       next.set(target.id, { engine, state });
     }
@@ -174,6 +178,33 @@ export default class GoogleDriveSyncPlugin extends Plugin {
    * whole-vault target. Empty local folders (whole-vault targets) contribute
    * nothing, as there is no specific subfolder to exclude.
    */
+  /**
+   * Creates the per-run remote-listing store for a target. On mobile this is an
+   * IndexedDB-backed store so the (potentially huge) Drive listing lives OUTSIDE
+   * the JS heap — the reconcile-time OOM guard. On desktop an in-memory store is
+   * fine (no memory pressure) and avoids IndexedDB entirely. A unique DB name
+   * per target keeps concurrent-nothing clean; the store is cleared/disposed by
+   * the engine each run.
+   */
+  private async createRemoteStore(targetId: string): Promise<RemoteStore> {
+    // Use IndexedDB whenever it's available (desktop AND mobile). On mobile it's
+    // the reconcile-time OOM guard (the large listing lives outside the JS
+    // heap); on desktop it's not strictly needed but keeps ONE code path and
+    // lets the DB be inspected in DevTools (Application → IndexedDB →
+    // gds-remote-<id>). Falls back to in-memory only if IndexedDB is absent.
+    if (typeof indexedDB !== "undefined") {
+      try {
+        const store = await IndexedDbRemoteStore.open(`gds-remote-${targetId}`);
+        log.info(`Remote store: IndexedDB (gds-remote-${targetId})`);
+        return store;
+      } catch (e) {
+        log.warn("IndexedDB nicht verfügbar, nutze In-Memory-Store:", e);
+      }
+    }
+    log.info("Remote store: in-memory (IndexedDB unavailable)");
+    return new InMemoryRemoteStore();
+  }
+
   private siblingLocalFolders(exceptId: string): string[] {
     return this.settings.targets
       .filter((tg) => tg.id !== exceptId && tg.localFolder.trim() !== "")

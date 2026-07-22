@@ -856,35 +856,28 @@ describe("SyncEngine.sync — per-run batch cap (mobile) + resume", () => {
   });
 });
 
-describe("SyncEngine.sync — fetch spill to disk", () => {
-  it("downloads a remote file via the spill path and leaves no temp file behind", async () => {
-    // Arrange: a purely-remote file. The fake streams it via onFile, so the
-    // engine spills it to the temp JSONL, reads it back, reconciles, downloads.
-    const { engine, vault, drive, store } = setup();
-    drive.seed({ path: "spilled.md", content: "hi", md5: "m1", id: "d1" });
+describe("SyncEngine.sync — remote store (streamed reconcile)", () => {
+  it("downloads a remote file streamed through the remote store", async () => {
+    // The fake streams the file via onFile → the engine stores it in the remote
+    // store → batched reconcile → download.
+    const { engine, vault, drive } = setup();
+    drive.seed({ path: "stored.md", content: "hi", md5: "m1", id: "d1" });
 
-    // Act
     const summary = await engine.sync(false);
 
-    // Assert: downloaded, base written, and the spill temp file is gone.
     expect(summary?.downloaded).toBe(1);
-    expect(await vault.adapter.exists("spilled.md")).toBe(true);
-    const leftover: unknown[] = [];
-    for await (const rec of store.spillRead()) leftover.push(rec);
-    expect(leftover).toEqual([]);
+    expect(await vault.adapter.exists("stored.md")).toBe(true);
   });
 
-  it("preserves duplicate-path resolution through the spill (identical content -> smallest id)", async () => {
-    // Arrange: two Drive files at the SAME path with identical md5 -> the engine
-    // must pick the smallest id and download once (dedup preserved via spill).
+  it("preserves duplicate-path resolution through the store (identical content -> smallest id)", async () => {
+    // Two Drive files at the SAME path with identical md5 -> the store keeps the
+    // smallest id and the engine downloads once.
     const { engine, drive, vault } = setup();
     drive.seed({ path: "dup.md", content: "x", md5: "same", id: "d2" });
     drive.seed({ path: "dup.md", content: "x", md5: "same", id: "d1" });
 
-    // Act
     const summary = await engine.sync(false);
 
-    // Assert: exactly one download, from the smallest id.
     expect(summary?.downloaded).toBe(1);
     expect(drive.calls.downloadFile).toEqual(["d1"]);
     expect(await vault.adapter.exists("dup.md")).toBe(true);

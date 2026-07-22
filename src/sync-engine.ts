@@ -8,6 +8,12 @@ import { log } from "./logger";
 import { t } from "./i18n";
 import { extensionAllowed, isIgnored, parseIgnorePatterns } from "./ignore";
 import {
+  InMemoryRemoteStore,
+  RemoteRecord,
+  RemoteStore,
+  recordToDriveFile,
+} from "./remote-store";
+import {
   DriveFile,
   FolderAction,
   SyncAction,
@@ -47,6 +53,13 @@ const MAX_CONCURRENCY = 6;
  * The cap counts only "real" actions (transfers), not folder creates or noops.
  */
 const MAX_ACTIONS_PER_RUN_MOBILE = 400;
+
+/**
+ * How many remote records are reconciled+executed per batch when streaming from
+ * the remote store. Bounds the transient actions array + per-batch remote map so
+ * a huge listing never materializes at once (iOS reconcile-time OOM guard).
+ */
+const RECONCILE_BATCH = 200;
 
 /** Per-run action cap for the current platform. */
 function maxActionsPerRun(): number {
@@ -134,7 +147,15 @@ export class SyncEngine {
      * platform value (mobile: MAX_ACTIONS_PER_RUN_MOBILE, desktop: Infinity).
      * Injectable so tests can drive the batch/resume behavior with a small cap.
      */
-    private perRunActionCap: () => number = maxActionsPerRun
+    private perRunActionCap: () => number = maxActionsPerRun,
+    /**
+     * Factory for the per-run remote-listing store. Defaults to an in-memory
+     * store (desktop + tests — no memory pressure). On mobile, main.ts injects
+     * an IndexedDB-backed store so the large listing lives OUTSIDE the JS heap
+     * (the reconcile-time OOM guard). Awaited once per run; disposed at run end.
+     */
+    private remoteStoreFactory: () => Promise<RemoteStore> = async () =>
+      new InMemoryRemoteStore()
   ) {}
 
   /**
@@ -184,6 +205,9 @@ export class SyncEngine {
 
     this.status.start(t("statusSyncStarted"), Date.now());
 
+    // Hoisted so the finally can always dispose it (the per-run remote store may
+    // hold an open IndexedDB handle / its own on-disk DB).
+    let remoteStore: RemoteStore | null = null;
     try {
       // Clear the folder cache per run (IDs may have changed externally).
       this.drive.clearFolderCache();
@@ -198,16 +222,19 @@ export class SyncEngine {
         `local collected — files=${local.size}, mobile=${Platform.isMobile}`
       );
 
+      // Create the remote store up front and write each fetched file straight
+      // into it DURING the listing (IndexedDB on mobile → the full remote set
+      // lives OUTSIDE the JS heap; the reconcile-time OOM guard). No intermediate
+      // spill file: `onFile` is awaited by the listing (backpressure), so puts
+      // can't pile up in memory. The store resolves duplicates on `put`
+      // (identical content → smallest id; differing → ambiguous).
+      remoteStore = await this.remoteStoreFactory();
+      const store = remoteStore;
+      await store.clear();
+
       this.status.update(t("engineFetchingDrive"), 0);
       let lastCrumbMs = 0;
-      // MEMORY (iOS OOM guard): stream each fetched file to a temp JSONL spill
-      // file instead of accumulating the whole listing in RAM. Filters are
-      // applied HERE (in onFile) exactly as they were when building remoteByPath
-      // from an in-memory array — an ignored/excluded/system/google-apps file
-      // is never spilled, so it can never look "deleted on one side" (deletion
-      // safety). Grouping by path (dedup) happens on read-back below.
-      await this.state.spillBegin();
-      let spilledFiles = 0;
+      let storedFiles = 0;
       const listing = await this.drive.listFiles(
         this.active.driveFolderId,
         this.active.driveSharedId || undefined,
@@ -227,85 +254,42 @@ export class SyncEngine {
             );
           }
         },
-        // onFile: apply the same remote-side filters, then spill a lean record.
-        (f) => {
+        // onFile: apply the same remote-side filters, then store the lean record.
+        // Awaited by the listing, so IndexedDB writes apply backpressure and the
+        // listing never accumulates in memory. A filtered file is never stored,
+        // so it can't look "deleted on one side" (deletion safety).
+        async (f) => {
           if (isGoogleAppsFile(f.mimeType)) return;
           const path = normalizePath(this.drive.pathOf(f));
           if (isSystemPath(path, this.vault.configDir)) return;
           if (!this.extensionAllowed(path)) return;
           if (this.isIgnored(path)) return;
           if (this.isExcluded(path)) return;
-          spilledFiles++;
-          void this.state.spillAppend({
-            p: path,
-            i: f.id,
-            m: f.md5Checksum,
-            s: f.size,
-            t: f.modifiedTimeMs,
+          storedFiles++;
+          await store.put({
+            path,
+            id: f.id,
+            md5: f.md5Checksum,
+            size: f.size,
+            mtimeMs: f.modifiedTimeMs,
           });
         }
       );
-      await this.state.spillFlush();
       log.info(
-        `Drive listing done: ${listing.folders.length} folders, ${spilledFiles} files (spilled)`
+        `Drive listing done: ${listing.folders.length} folders, ${storedFiles} files (stored)`
       );
 
-      // Rebuild the remote map by streaming the spilled records back (one line
-      // at a time — never the whole parsed graph). Group by path first, then
-      // resolve duplicates, EXACTLY as the previous in-memory path did.
-      //
-      // Drive allows MULTIPLE non-trashed files with the same name in the same
-      // folder (different IDs). Mapped to the same vault-relative path they would
-      // overwrite each other; a deleteRemote/conflict might hit the wrong ID.
-      // Therefore group by path, then resolve.
-      const remoteByPath = new Map<string, DriveFile[]>();
-      for await (const rec of this.state.spillRead()) {
-        const f: DriveFile = {
-          id: rec.i,
-          name: "",
-          mimeType: "",
-          modifiedTimeMs: rec.t,
-          md5Checksum: rec.m,
-          size: rec.s,
-          relativePath: rec.p,
-        };
-        const list = remoteByPath.get(rec.p);
-        if (list) list.push(f);
-        else remoteByPath.set(rec.p, [f]);
-      }
-
-      // Resolve collisions: If ALL duplicates have IDENTICAL CONTENT (same,
-      // present md5), the choice doesn't matter — we take a stable one (smallest
-      // Drive ID) and sync normally. If the contents differ (or an md5 is
-      // missing, so equality can't be proven), it's a real ambiguity:
-      // skip the path ENTIRELY (both sides) instead of guessing a file.
-      const remote = new Map<string, DriveFile>();
-      for (const [path, dups] of remoteByPath) {
-        if (dups.length === 1) {
-          remote.set(path, dups[0]);
-          continue;
-        }
-        const first = dups[0].md5Checksum;
-        const allSameContent =
-          !!first && dups.every((d) => d.md5Checksum === first);
-        if (allSameContent) {
-          // Identical content -> deterministically choose the smallest ID.
-          const chosen = dups.reduce((a, b) => (a.id <= b.id ? a : b));
-          remote.set(path, chosen);
-          this.status.append(
-            "info",
-            t("engineDuplicateSameContent", { path })
-          );
-          continue;
-        }
-        // Real ambiguity: remove the path from reconciliation on both sides,
-        // so it isn't treated as "only local → upload/delete".
+      // Ambiguous paths (dup with differing content): skip on BOTH sides, so a
+      // path we can't safely resolve isn't treated as "only local → upload/
+      // delete". Same behavior as before, just sourced from the store.
+      for (const path of await store.ambiguousPaths()) {
         local.delete(path);
         const detail = t("engineDuplicateDifferent", { path });
         summary.errors.push(detail);
         this.status.append("error", detail);
         log.warn("Pfad-Kollision in Drive:", detail);
       }
+      const remoteCount = await store.count();
 
       // Index Drive folders by path (system folders excluded).
       // Same collision logic as for files: duplicate folder names (same
@@ -338,7 +322,7 @@ export class SyncEngine {
         "info",
         t("engineCountSummary", {
           localFiles: local.size,
-          remoteFiles: remote.size,
+          remoteFiles: remoteCount,
           localFolders: localFolders.size,
           remoteFolders: remoteFolders.size,
         })
@@ -352,12 +336,6 @@ export class SyncEngine {
         else base.set(e.path, e);
       }
 
-      const actions = reconcile({
-        local,
-        remote,
-        base,
-        neverDeleteRemote: this.target.neverDeleteRemote,
-      });
       const folderActions = reconcileFolders({
         local: localFolders,
         remote: remoteFolders,
@@ -366,27 +344,6 @@ export class SyncEngine {
       });
 
       // Only count "real" actions (noop not as a progress step).
-      const allWork = actions.filter((a) => a.type !== "noop");
-      // Cap the work per run on mobile so a huge from-zero sync doesn't do
-      // thousands of transfers in one memory-heavy burst (iOS OOM). The
-      // remainder is resumed on the next run — completed transfers are marked
-      // done in the base, so reconcile only re-derives what's left.
-      const perRunCap = this.perRunActionCap();
-      const capped = allWork.length > perRunCap;
-      const work = capped ? allWork.slice(0, perRunCap) : allWork;
-      this.status.setTotal(work.length);
-      if (allWork.length === 0) {
-        this.status.append("info", t("engineNoChanges"));
-      } else if (capped) {
-        this.status.append(
-          "info",
-          t("engineBatchLimited", {
-            batch: work.length,
-            total: allWork.length,
-          })
-        );
-      }
-
       // 1) CREATE folders (before files, so target folders exist).
       //    Sorted by path depth: parent folders first.
       const folderCreates = folderActions
@@ -410,53 +367,16 @@ export class SyncEngine {
         }
       }
 
-      // 2a) noop actions only refresh the base (no I/O) — handle them quickly
-      //     and sequentially first.
-      for (const action of actions) {
-        if (action.type === "noop") {
-          await this.applyAction(action, local, remote, summary);
-        }
-      }
-
-      // 2b) Real file actions run through a bounded concurrency pool. File
-      //     transfers are independent (distinct paths → distinct state keys), so
-      //     parallel I/O is safe and dramatically faster on large vaults. The
-      //     folder cache (Drive) and ensureParentDir (local) are parallel-safe.
-      //     State is checkpointed every CHECKPOINT_EVERY completed actions so an
-      //     interruption costs only the last few actions.
-      let done = 0;
-      let sinceCheckpoint = 0;
-      await runPool(work, MAX_CONCURRENCY, async (action) => {
-        try {
-          await this.applyAction(action, local, remote, summary);
-          this.status.append(
-            "info",
-            t("engineActionDone", { action: describeAction(action) })
-          );
-        } catch (e) {
-          const detail = t("engineActionError", {
-            type: action.type,
-            path: pathOfAction(action),
-            error: errMsg(e),
-          });
-          summary.errors.push(detail);
-          this.status.append("error", detail);
-          log.error("Aktion fehlgeschlagen:", detail, e);
-        }
-        // Progress + checkpoint after each completed action. The count is
-        // placed at the FRONT of the line (right after the symbol) via
-        // describeAction, so it reads "↓ (12/340) Download …".
-        done++;
-        this.status.update(
-          describeAction(action, `(${done}/${work.length})`),
-          done,
-          work.length
-        );
-        if (++sinceCheckpoint >= CHECKPOINT_EVERY) {
-          sinceCheckpoint = 0;
-          await this.checkpoint();
-        }
-      });
+      // 2) Reconcile + execute FILE actions in bounded batches sourced from the
+      //    remote store, so the full remote map and the full actions array are
+      //    never materialized at once (iOS reconcile-time OOM guard). Returns
+      //    whether the per-run cap was hit (more work remains → resume later).
+      const { capped } = await this.reconcileFilesStreamed(
+        local,
+        base,
+        store,
+        summary
+      );
 
       // When the run was capped (mobile batch limit), the file transfers are
       // only partially done, so the base does not yet reflect the final state.
@@ -469,18 +389,12 @@ export class SyncEngine {
         await this.checkpoint();
         this.running = false;
         summary.moreRemaining = true;
-        this.status.finish(
-          summary.errors.length ? "error" : "done",
-          t("engineBatchMore", {
-            done: done,
-            total: allWork.length,
-          })
-        );
-        if (showNotice) {
-          new Notice(
-            t("engineBatchMore", { done: done, total: allWork.length })
-          );
-        }
+        const msg = t("engineBatchMore", {
+          done: summary.uploaded + summary.downloaded,
+          total: summary.uploaded + summary.downloaded,
+        });
+        this.status.finish(summary.errors.length ? "error" : "done", msg);
+        if (showNotice) new Notice(msg);
         return summary;
       }
 
@@ -504,7 +418,7 @@ export class SyncEngine {
         // a populated remote subtree would otherwise be deleted.
         if (
           fa.type === "deleteRemoteFolder" &&
-          this.remoteSubtreeHasFiles(fa.path, remote)
+          (await store.hasSubtreeFiles(fa.path))
         ) {
           const detail = t("engineRemoteFolderNotDeleted", { path: fa.path });
           summary.errors.push(detail);
@@ -571,11 +485,13 @@ export class SyncEngine {
     } finally {
       // Safety net in case a path above did not reset the flag.
       this.running = false;
-      // Always drop the temp fetch-spill file (best-effort; never throws).
-      try {
-        await this.state.spillDiscard();
-      } catch (e) {
-        log.warn("Konnte Fetch-Spill nicht entfernen:", e);
+      // Dispose the remote store (closes/deletes its IndexedDB). Best-effort.
+      if (remoteStore) {
+        try {
+          await remoteStore.dispose();
+        } catch (e) {
+          log.warn("Konnte Remote-Store nicht schließen:", e);
+        }
       }
     }
   }
@@ -593,6 +509,142 @@ export class SyncEngine {
     } catch (e) {
       log.error("Checkpoint-Speichern fehlgeschlagen:", e);
     }
+  }
+
+  /**
+   * Reconciles and executes FILE actions in bounded batches, sourcing the
+   * remote listing from `store` (IndexedDB on mobile) so the full remote map
+   * and full actions array are never held at once (iOS reconcile-time OOM).
+   *
+   * The pure `reconcile()` is reused UNCHANGED — it is called per batch over a
+   * small subset of paths. Because every reconcile decision is per-path
+   * independent (it only reads local/remote/base for that one path), calling it
+   * per subset yields exactly the same actions as one whole-set call.
+   *
+   * DELETION SAFETY: two phases.
+   *  - Phase 1 (remote-present): stream the store in batches. For each batch,
+   *    reconcile the batch paths (their local + base + the batch remote) and
+   *    execute. These are additions/updates/noops/conflicts — never a deletion
+   *    of some OTHER path. Record every remote path in `seen`.
+   *  - Phase 2 (remote-absent): only AFTER the full remote set has been seen,
+   *    reconcile the paths in (local ∪ base) that are NOT in `seen`, with an
+   *    EMPTY remote for them. This is where local-only uploads and
+   *    remote-deletion (deleteLocal) are decided — safely, because we now know
+   *    the complete remote set. Running deletions before the full scan would
+   *    mass-delete, hence the strict ordering.
+   *
+   * The per-run cap (mobile batch limit) counts executed real actions; when hit
+   * mid-run, we stop and report `capped` so the caller resumes next run (folder
+   * deletes + phase 2 are then skipped until a full, uncapped run).
+   */
+  private async reconcileFilesStreamed(
+    local: Map<string, LocalFile>,
+    base: Map<string, SyncStateEntry>,
+    store: RemoteStore,
+    summary: SyncSummary
+  ): Promise<{ capped: boolean }> {
+    const perRunCap = this.perRunActionCap();
+    const neverDeleteRemote = this.target.neverDeleteRemote;
+    const seen = new Set<string>();
+    let done = 0;
+    let sinceCheckpoint = 0;
+    let capped = false;
+
+    // Execute one batch of already-reconciled actions through the bounded pool,
+    // updating progress/checkpoint. Returns false if the cap was hit.
+    const executeActions = async (
+      actions: SyncAction[],
+      remoteMap: Map<string, DriveFile>
+    ): Promise<boolean> => {
+      const work = actions.filter((a) => a.type !== "noop");
+      // noops: state-only, run sequentially first (cheap).
+      for (const a of actions) {
+        if (a.type === "noop") await this.applyAction(a, local, remoteMap, summary);
+      }
+      // Respect the per-run cap: only take as many real actions as remain.
+      const remaining = perRunCap - done;
+      const slice = work.length > remaining ? work.slice(0, remaining) : work;
+      if (slice.length < work.length) capped = true;
+
+      await runPool(slice, MAX_CONCURRENCY, async (action) => {
+        try {
+          await this.applyAction(action, local, remoteMap, summary);
+          this.status.append(
+            "info",
+            t("engineActionDone", { action: describeAction(action) })
+          );
+        } catch (e) {
+          const detail = t("engineActionError", {
+            type: action.type,
+            path: pathOfAction(action),
+            error: errMsg(e),
+          });
+          summary.errors.push(detail);
+          this.status.append("error", detail);
+          log.error("Aktion fehlgeschlagen:", detail, e);
+        }
+        done++;
+        this.status.update(describeAction(action, `(${done})`), done);
+        if (++sinceCheckpoint >= CHECKPOINT_EVERY) {
+          sinceCheckpoint = 0;
+          await this.checkpoint();
+        }
+      });
+      return !capped;
+    };
+
+    // --- Phase 1: remote-present paths (additions/updates/conflicts/noops) ---
+    await store.forEachBatch(RECONCILE_BATCH, async (batch) => {
+      if (capped) return; // stop feeding once the cap is hit
+      const remoteMap = new Map<string, DriveFile>();
+      const localSub = new Map<string, LocalFile>();
+      const baseSub = new Map<string, SyncStateEntry>();
+      for (const rec of batch) {
+        seen.add(rec.path);
+        remoteMap.set(rec.path, recordToDriveFile(rec));
+        const l = local.get(rec.path);
+        if (l) localSub.set(rec.path, l);
+        const b = base.get(rec.path);
+        if (b) baseSub.set(rec.path, b);
+      }
+      const actions = reconcile({
+        local: localSub,
+        remote: remoteMap,
+        base: baseSub,
+        neverDeleteRemote,
+      });
+      await executeActions(actions, remoteMap);
+    });
+
+    if (capped) return { capped: true };
+
+    // --- Phase 2: remote-absent paths (local-only uploads + remote deletions).
+    // Safe ONLY now that the full remote set has been seen. Reconcile in batches
+    // with an EMPTY remote for these paths.
+    const absent: string[] = [];
+    for (const p of local.keys()) if (!seen.has(p)) absent.push(p);
+    for (const p of base.keys()) if (!seen.has(p) && !local.has(p)) absent.push(p);
+
+    for (let i = 0; i < absent.length && !capped; i += RECONCILE_BATCH) {
+      const slicePaths = absent.slice(i, i + RECONCILE_BATCH);
+      const localSub = new Map<string, LocalFile>();
+      const baseSub = new Map<string, SyncStateEntry>();
+      for (const p of slicePaths) {
+        const l = local.get(p);
+        if (l) localSub.set(p, l);
+        const b = base.get(p);
+        if (b) baseSub.set(p, b);
+      }
+      const actions = reconcile({
+        local: localSub,
+        remote: new Map(), // remote-absent by construction
+        base: baseSub,
+        neverDeleteRemote,
+      });
+      await executeActions(actions, new Map());
+    }
+
+    return { capped };
   }
 
   /** Executes a single reconcile action and updates the base. */
@@ -815,22 +867,6 @@ export class SyncEngine {
       if (rel && !this.isIgnored(rel) && !this.isExcluded(rel)) result.add(rel);
     }
     return result;
-  }
-
-  /**
-   * Is there still (at least) one file below the folder `folderPath` in the
-   * current Drive listing? Serves as protection against trashing a populated
-   * remote subtree (see the deleteRemoteFolder safety net).
-   */
-  private remoteSubtreeHasFiles(
-    folderPath: string,
-    remote: Map<string, DriveFile>
-  ): boolean {
-    const prefix = folderPath + "/";
-    for (const path of remote.keys()) {
-      if (path.startsWith(prefix)) return true;
-    }
-    return false;
   }
 
   /** Executes a single folder action and maintains the state. */
