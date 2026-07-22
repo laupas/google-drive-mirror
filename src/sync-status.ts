@@ -173,6 +173,26 @@ export class SyncStatus {
     this.scheduleSave();
   }
 
+  /**
+   * Like `append`, but persists the log IMMEDIATELY (awaits `save()`) instead of
+   * debouncing. Used for diagnostics that must survive a crash / WebView
+   * teardown on mobile — a debounced save can be lost if the JS context dies
+   * before the 1s timer fires. Best-effort: a write failure is swallowed so it
+   * never worsens the situation being diagnosed.
+   */
+  async appendNow(level: LogEntry["level"], message: string): Promise<void> {
+    this.log.push({ ts: nowMs(), level, message });
+    if (this.log.length > this.maxLog) {
+      this.log.splice(0, this.log.length - this.maxLog);
+    }
+    this.emit();
+    try {
+      await this.save();
+    } catch {
+      /* Diagnostics must not throw. */
+    }
+  }
+
   finish(phase: "done" | "error", message: string): void {
     this.progress = {
       ...this.progress,

@@ -229,18 +229,44 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     // Lightweight ticker so the elapsed time keeps updating even without new events.
     const ticker = window.setInterval(() => this.status.touch(), 1000);
     await this.acquireWakeLock();
+    // DIAGNOSTICS: capture async errors that escape the per-target try/catch
+    // (unhandled rejections / global errors) into the PERSISTENT log, so a
+    // failure that tears down the mobile WebView is still readable afterwards
+    // in the "Show log" modal. Registered only for the duration of the run.
+    const stopDiag = this.installRunDiagnostics();
+    void this.status.appendNow(
+      "info",
+      `[diag] run start — mobile=${Platform.isMobile}, targets=${targets.length}`
+    );
     try {
       await this.withSuppressedEvents(async () => {
         for (const target of targets) {
           const rt = this.runtimes.get(target.id);
           if (!rt) continue;
+          void this.status.appendNow(
+            "info",
+            `[diag] target start — ${target.name || target.id}`
+          );
           await rt.engine.sync(showNotice);
+          void this.status.appendNow(
+            "info",
+            `[diag] target done — ${target.name || target.id}`
+          );
         }
       });
+    } catch (e) {
+      // Anything the engine didn't already catch lands here. Flush it now.
+      await this.status.appendNow(
+        "error",
+        `[diag] runSync threw: ${errString(e)}`
+      );
+      log.error("runSync failed", e);
     } finally {
       this.running = false;
       window.clearInterval(ticker);
+      stopDiag();
       await this.releaseWakeLock();
+      void this.status.appendNow("info", "[diag] run end");
       // The final status emit (finish()) fired while `running` was still true,
       // so subscribers that gate on isSyncing() (sync button, status bar) saw
       // the stale value. Notify once more now that the flag has cleared, so the
@@ -288,6 +314,33 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     } catch (e) {
       log.warn("Wake lock release failed", e);
     }
+  }
+
+  /**
+   * DIAGNOSTICS: while a sync runs, route global unhandled errors / promise
+   * rejections into the PERSISTENT sync log so a failure that tears down the
+   * mobile WebView is still readable afterwards. Returns a cleanup function
+   * that removes the listeners.
+   */
+  private installRunDiagnostics(): () => void {
+    const onRejection = (ev: PromiseRejectionEvent) => {
+      void this.status.appendNow(
+        "error",
+        `[diag] unhandledrejection: ${errString(ev.reason)}`
+      );
+    };
+    const onError = (ev: ErrorEvent) => {
+      void this.status.appendNow(
+        "error",
+        `[diag] window error: ${ev.message} @ ${ev.filename}:${ev.lineno}`
+      );
+    };
+    window.addEventListener("unhandledrejection", onRejection);
+    window.addEventListener("error", onError);
+    return () => {
+      window.removeEventListener("unhandledrejection", onRejection);
+      window.removeEventListener("error", onError);
+    };
   }
 
   /** Updates the status bar based on the current sync status. */
@@ -689,6 +742,18 @@ function generateTargetId(): string {
   const rand = Math.random().toString(36).slice(2, 10);
   const time = Date.now().toString(36);
   return `${time}${rand}`;
+}
+
+/** Best-effort string form of an unknown thrown value, including a stack. */
+function errString(e: unknown): string {
+  if (e instanceof Error) {
+    return e.stack ? `${e.message}\n${e.stack}` : e.message;
+  }
+  try {
+    return String(e);
+  } catch {
+    return "<unstringifiable error>";
+  }
 }
 
 /** Removes fields from earlier plugin versions that no longer belong here. */
