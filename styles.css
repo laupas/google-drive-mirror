@@ -25,6 +25,10 @@
   border-radius: var(--radius-s);
   background: var(--background-secondary);
   font-size: var(--font-ui-small);
+  /* Long unbroken paths (no spaces, slash-separated) must wrap inside the
+   * box instead of overflowing horizontally (critical on narrow mobile). */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .gds-status.is-running {
   background: var(--background-modifier-hover);
