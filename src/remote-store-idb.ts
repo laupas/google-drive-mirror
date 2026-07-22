@@ -22,6 +22,27 @@ interface StoredRecord extends RemoteRecord {
 
 const STORE = "remote";
 
+// Resolve the IndexedDB globals via globalThis. Bare `indexedDB` references
+// don't reliably resolve to a polyfilled global in the Node test environment;
+// going through globalThis works both in the WebView and under fake-indexeddb.
+function idb(): IDBFactory {
+  const g = globalThis as unknown as { indexedDB?: IDBFactory };
+  if (!g.indexedDB) throw new Error("indexedDB unavailable");
+  return g.indexedDB;
+}
+function idbKeyRange(): typeof IDBKeyRange {
+  return (globalThis as unknown as { IDBKeyRange: typeof IDBKeyRange })
+    .IDBKeyRange;
+}
+
+/** True when IndexedDB is available in the current runtime. */
+export function indexedDbAvailable(): boolean {
+  return (
+    typeof (globalThis as unknown as { indexedDB?: unknown }).indexedDB !==
+    "undefined"
+  );
+}
+
 export class IndexedDbRemoteStore implements RemoteStore {
   private db: IDBDatabase | null = null;
 
@@ -36,7 +57,7 @@ export class IndexedDbRemoteStore implements RemoteStore {
 
   private openDb(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open(this.dbName, 1);
+      const req = idb().open(this.dbName, 1);
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains(STORE)) {
@@ -61,25 +82,51 @@ export class IndexedDbRemoteStore implements RemoteStore {
   }
 
   async clear(): Promise<void> {
-    await this.reqP(this.tx("readwrite").clear());
+    if (!this.db) throw new Error("RemoteStore not open");
+    await new Promise<void>((resolve, reject) => {
+      const req = this.db!.transaction(STORE, "readwrite")
+        .objectStore(STORE)
+        .clear();
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
   }
 
   async put(rec: RemoteRecord): Promise<void> {
-    const store = this.tx("readwrite");
-    const existing = (await this.reqP(store.get(rec.path))) as
-      | StoredRecord
-      | undefined;
-    if (existing?.ambiguous) return; // stays ambiguous
-    if (!existing) {
-      await this.reqP(store.put({ ...rec }));
-      return;
-    }
-    const res = resolveDuplicate(existing, rec);
-    if (res.ambiguous) {
-      await this.reqP(store.put({ ...existing, ambiguous: true }));
-    } else if (res.keep) {
-      await this.reqP(store.put({ ...res.keep }));
-    }
+    // The read-modify-write MUST stay within a single transaction with NO await
+    // between the get and the put: an IndexedDB transaction auto-commits as soon
+    // as control returns to the event loop with no pending request on it, so an
+    // `await` mid-transaction yields "without an in-progress transaction". We
+    // therefore issue the follow-up put synchronously inside the get's success
+    // callback (same tick, same transaction).
+    if (!this.db) throw new Error("RemoteStore not open");
+    return new Promise<void>((resolve, reject) => {
+      const tx = this.db!.transaction(STORE, "readwrite");
+      const store = tx.objectStore(STORE);
+      const getReq = store.get(rec.path);
+      getReq.onerror = () => reject(getReq.error);
+      getReq.onsuccess = () => {
+        const existing = getReq.result as StoredRecord | undefined;
+        let toStore: StoredRecord | null = null;
+        if (existing?.ambiguous) {
+          toStore = null; // stays ambiguous, no write
+        } else if (!existing) {
+          toStore = { ...rec };
+        } else {
+          const res = resolveDuplicate(existing, rec);
+          if (res.ambiguous) toStore = { ...existing, ambiguous: true };
+          else if (res.keep) toStore = { ...res.keep };
+        }
+        if (toStore === null) {
+          resolve();
+          return;
+        }
+        // Same transaction, synchronous — still in-progress.
+        const putReq = store.put(toStore);
+        putReq.onerror = () => reject(putReq.error);
+        putReq.onsuccess = () => resolve();
+      };
+    });
   }
 
   async get(path: string): Promise<RemoteRecord | undefined> {
@@ -144,7 +191,7 @@ export class IndexedDbRemoteStore implements RemoteStore {
   async hasSubtreeFiles(folderPath: string): Promise<boolean> {
     const prefix = folderPath + "/";
     // Key range [prefix, prefix + ￿) covers all descendants by path order.
-    const range = IDBKeyRange.bound(prefix, prefix + "￿", false, true);
+    const range = idbKeyRange().bound(prefix, prefix + "￿", false, true);
     const store = this.tx("readonly");
     return new Promise((resolve, reject) => {
       const req = store.openCursor(range);
@@ -171,7 +218,7 @@ export class IndexedDbRemoteStore implements RemoteStore {
       this.db = null;
     }
     await new Promise<void>((resolve) => {
-      const req = indexedDB.deleteDatabase(this.dbName);
+      const req = idb().deleteDatabase(this.dbName);
       req.onsuccess = () => resolve();
       req.onerror = () => resolve(); // best-effort
       req.onblocked = () => resolve();

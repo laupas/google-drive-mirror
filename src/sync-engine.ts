@@ -38,6 +38,19 @@ const CHECKPOINT_EVERY = 50;
  * (transient 429s are retried by the Drive client's request wrapper).
  */
 const MAX_CONCURRENCY = 6;
+/**
+ * Lower transfer concurrency on mobile. Each in-flight transfer holds a whole
+ * file in RAM (a download buffers the full ArrayBuffer; an upload transiently
+ * needs ~2× for the multipart body). 6 parallel large transfers blew the iOS
+ * WebView memory budget and OOM-killed the process DURING the download phase.
+ * Fewer in-flight buffers = a lower peak.
+ */
+const MAX_CONCURRENCY_MOBILE = 2;
+
+/** Transfer concurrency for the current platform (mobile is memory-constrained). */
+function transferConcurrency(): number {
+  return Platform.isMobile ? MAX_CONCURRENCY_MOBILE : MAX_CONCURRENCY;
+}
 
 /**
  * Maximum number of real file actions (upload/download/delete) processed in a
@@ -566,7 +579,7 @@ export class SyncEngine {
       const slice = work.length > remaining ? work.slice(0, remaining) : work;
       if (slice.length < work.length) capped = true;
 
-      await runPool(slice, MAX_CONCURRENCY, async (action) => {
+      await runPool(slice, transferConcurrency(), async (action) => {
         try {
           await this.applyAction(action, local, remoteMap, summary);
           this.status.append(

@@ -17,7 +17,7 @@ import { log, setDebugLogging } from "./logger";
 import { initLocale, t } from "./i18n";
 import { isIgnored, parseIgnorePatterns } from "./ignore";
 import { InMemoryRemoteStore, RemoteStore } from "./remote-store";
-import { IndexedDbRemoteStore } from "./remote-store-idb";
+import { IndexedDbRemoteStore, indexedDbAvailable } from "./remote-store-idb";
 
 /** Engine + state store pair for a single sync target. */
 interface TargetRuntime {
@@ -192,7 +192,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     // heap); on desktop it's not strictly needed but keeps ONE code path and
     // lets the DB be inspected in DevTools (Application → IndexedDB →
     // gds-remote-<id>). Falls back to in-memory only if IndexedDB is absent.
-    if (typeof indexedDB !== "undefined") {
+    if (indexedDbAvailable()) {
       try {
         const store = await IndexedDbRemoteStore.open(`gds-remote-${targetId}`);
         log.info(`Remote store: IndexedDB (gds-remote-${targetId})`);
