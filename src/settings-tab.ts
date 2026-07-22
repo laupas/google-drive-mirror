@@ -227,6 +227,34 @@ export class SettingsTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName(t("batchEnabledName"))
+      .setDesc(t("batchEnabledDesc"))
+      .addToggle((c) =>
+        c.setValue(s.batchEnabled).onChange(async (v) => {
+          s.batchEnabled = v;
+          await this.plugin.saveSettings();
+          this.display(); // show/hide the batch-size slider
+        })
+      );
+
+    // Batch size — only relevant (and shown) when batching is enabled.
+    if (s.batchEnabled) {
+      new Setting(containerEl)
+        .setName(t("batchSizeName"))
+        .setDesc(t("batchSizeDesc"))
+        .addSlider((c) =>
+          c
+            .setLimits(50, 2000, 50)
+            .setValue(s.batchSize)
+            .setDynamicTooltip()
+            .onChange(async (v) => {
+              s.batchSize = v;
+              await this.plugin.saveSettings();
+            })
+        );
+    }
+
+    new Setting(containerEl)
       .setName(t("debugLoggingName"))
       .setDesc(t("debugLoggingDesc"))
       .addToggle((c) =>

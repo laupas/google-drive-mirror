@@ -2,6 +2,7 @@ import { requestUrl } from "obsidian";
 import { DriveFile, DriveFolder } from "./types";
 import { OAuthManager } from "./oauth";
 import { MessageKey, t } from "./i18n";
+import { log } from "./logger";
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -103,6 +104,13 @@ const defaultRequestImpl: RequestFn = async (params) => {
 
 export class GoogleDriveClient {
   /**
+   * Whether native fetch works for downloads in this runtime: undefined = not
+   * yet probed, true = use fetch, false = CORS/network blocked it, use
+   * requestUrl. Decided on the first download and cached for the session.
+   */
+  private fetchDownloadsWork: boolean | undefined = undefined;
+
+  /**
    * @param oauth    Token provider.
    * @param requestImpl  HTTP implementation (default: Obsidian's requestUrl).
    *                     Injectable so tests can verify retry/backoff.
@@ -110,7 +118,13 @@ export class GoogleDriveClient {
   constructor(
     private oauth: OAuthManager,
     private requestImpl: RequestFn = defaultRequestImpl
-  ) {}
+  ) {
+    // Only attempt native fetch for downloads when running with the REAL
+    // requestUrl impl (production). When a custom requestImpl is injected
+    // (tests), keep everything on that impl so retry/backoff stays testable and
+    // no real network call is made.
+    if (requestImpl !== defaultRequestImpl) this.fetchDownloadsWork = false;
+  }
 
   private async authHeader(): Promise<Record<string, string>> {
     const token = await this.oauth.getAccessToken();
@@ -369,8 +383,47 @@ export class GoogleDriveClient {
 
   /** Downloads the binary content of a file. */
   async downloadFile(driveId: string): Promise<ArrayBuffer> {
+    const url = `${DRIVE_API}/files/${driveId}?alt=media&${SUPPORTS_ALL_DRIVES}`;
+
+    // SPIKE / iOS OOM workaround: prefer native fetch() over requestUrl. On
+    // mobile, requestUrl base64-encodes the body across the app↔native bridge
+    // (documented Obsidian limitation, won't-fix), which accumulates memory and
+    // OOM-kills the WebView during a large download run. Native fetch streams
+    // bytes without that overhead — IF Obsidian's WebView allows the cross-
+    // origin call to Drive (Drive sends no CORS headers, but the privileged app
+    // WebView may not enforce it like a browser tab). We try fetch first and
+    // fall back to requestUrl on ANY failure, so correctness never regresses.
+    if (this.fetchDownloadsWork !== false) {
+      try {
+        const token = await this.oauth.getAccessToken();
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const buf = await res.arrayBuffer();
+          if (this.fetchDownloadsWork === undefined) {
+            this.fetchDownloadsWork = true;
+            log.info("Downloads: using native fetch (bypasses requestUrl bridge)");
+          }
+          return buf;
+        }
+        // Non-OK HTTP is a real error, not a fetch/CORS problem — let requestUrl
+        // handle it uniformly (it maps status → localized error).
+      } catch (e) {
+        // fetch threw (likely CORS/network in the WebView) — disable it for the
+        // rest of the session and fall back to requestUrl.
+        if (this.fetchDownloadsWork === undefined) {
+          this.fetchDownloadsWork = false;
+          log.warn(
+            "Downloads: native fetch unavailable (falling back to requestUrl):",
+            e
+          );
+        }
+      }
+    }
+
     const resp = await this.request({
-      url: `${DRIVE_API}/files/${driveId}?alt=media&${SUPPORTS_ALL_DRIVES}`,
+      url,
       method: "GET",
       headers: await this.authHeader(),
       throw: false,

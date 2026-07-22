@@ -135,6 +135,12 @@ export const de: Partial<Messages> = {
   debugLoggingName: "Debug-Logging",
   debugLoggingDesc:
     "Schreibt ausführliche Info-Meldungen in die Developer-Console. Nur zur Fehlersuche aktivieren.",
+  batchEnabledName: "In Stapeln synchronisieren",
+  batchEnabledDesc:
+    "Verarbeitet eine große Synchronisierung in Stapeln und setzt fort, bis alles fertig ist — hält den Speicher begrenzt (auf Mobilgeräten empfohlen). Ausschalten, um alles in einem Durchgang zu synchronisieren — schneller auf leistungsfähigen Geräten, kann aber eine sehr große Synchronisierung auf dem Mobilgerät zum Absturz bringen.",
+  batchSizeName: "Stapelgröße",
+  batchSizeDesc:
+    "Maximale Dateiübertragungen pro Durchlauf vor dem Fortsetzen (50–2000). Höher bedeutet weniger Durchläufe, aber mehr Speicher pro Durchlauf. Standard 400.",
 
   // ---- Einstellungen: Aktionen & Status ----
   headingActionsStatus: "4. Aktionen & Status",

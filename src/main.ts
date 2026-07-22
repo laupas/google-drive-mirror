@@ -159,7 +159,10 @@ export default class GoogleDriveSyncPlugin extends Plugin {
         this.status,
         this.app.fileManager,
         () => this.siblingLocalFolders(target.id),
-        undefined, // per-run action cap: engine's platform default
+        // Per-run transfer cap from settings: batching off → unlimited (one
+        // pass); on → batchSize per run, resuming until caught up.
+        () =>
+          this.settings.batchEnabled ? this.settings.batchSize : Infinity,
         () => this.createRemoteStore(target.id)
       );
       next.set(target.id, { engine, state });

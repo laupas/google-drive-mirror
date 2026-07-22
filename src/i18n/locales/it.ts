@@ -136,6 +136,12 @@ export const it: Partial<Messages> = {
   debugLoggingName: "Log di debug",
   debugLoggingDesc:
     "Scrive messaggi informativi dettagliati nella console per sviluppatori. Abilita solo per la risoluzione dei problemi.",
+  batchEnabledName: "Sincronizza a lotti",
+  batchEnabledDesc:
+    "Elabora una sincronizzazione grande a lotti e riprende fino al completamento, mantenendo la memoria limitata (consigliato su dispositivi mobili). Disattiva per sincronizzare tutto in un'unica passata — più veloce su dispositivi capaci, ma una sincronizzazione molto grande può far bloccare l'app su mobile.",
+  batchSizeName: "Dimensione del lotto",
+  batchSizeDesc:
+    "Numero massimo di trasferimenti di file per esecuzione prima di riprendere (50–2000). Più alto significa meno riprese ma più memoria per esecuzione. Predefinito 400.",
 
   // ---- Impostazioni: azioni & stato ----
   headingActionsStatus: "4. Azioni & stato",

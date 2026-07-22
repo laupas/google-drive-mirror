@@ -108,6 +108,20 @@ export interface PluginSettings {
    * so the console only shows errors (Obsidian guideline).
    */
   debugLogging: boolean;
+
+  /**
+   * Process a large sync in BATCHES of at most `batchSize` file transfers per
+   * run, resuming on the next run until caught up. Keeps peak memory bounded on
+   * constrained devices (the iOS OOM guard). When off, a run processes
+   * everything in one pass (faster on capable devices, but can crash a very
+   * large first sync on mobile). Default on.
+   */
+  batchEnabled: boolean;
+  /**
+   * Max file transfers per run when `batchEnabled` (50–2000). Higher = fewer
+   * resume passes but more memory per run. Default 400.
+   */
+  batchSize: number;
 }
 
 /**
@@ -221,6 +235,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   localDebounceMs: 2500,
   logRetentionHours: 24,
   debugLogging: false,
+  batchEnabled: true,
+  batchSize: 400,
 };
 
 /** Builds a fresh, empty sync target with sensible defaults. */

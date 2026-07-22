@@ -132,6 +132,12 @@ export const en = {
   debugLoggingName: "Debug logging",
   debugLoggingDesc:
     "Writes verbose info messages to the developer console. Enable only for troubleshooting.",
+  batchEnabledName: "Sync in batches",
+  batchEnabledDesc:
+    "Process a large sync in batches and resume until finished, keeping memory bounded (recommended on mobile). Turn off to sync everything in one pass — faster on capable devices, but a very large sync can crash the app on mobile.",
+  batchSizeName: "Batch size",
+  batchSizeDesc:
+    "Maximum file transfers per run before resuming (50–2000). Higher means fewer resume passes but more memory per run. Default 400.",
 
   // ---- Settings: actions & status (settings-tab.ts) ----
   headingActionsStatus: "4. Actions & status",

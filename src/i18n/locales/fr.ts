@@ -138,6 +138,12 @@ export const fr: Partial<Messages> = {
   debugLoggingName: "Journalisation de débogage",
   debugLoggingDesc:
     "Écrit des messages d'information détaillés dans la console de développement. À activer uniquement pour le dépannage.",
+  batchEnabledName: "Synchroniser par lots",
+  batchEnabledDesc:
+    "Traite une grosse synchronisation par lots et reprend jusqu'à la fin, en limitant la mémoire (recommandé sur mobile). Désactivez pour tout synchroniser en une passe — plus rapide sur les appareils performants, mais une très grosse synchronisation peut faire planter l'application sur mobile.",
+  batchSizeName: "Taille du lot",
+  batchSizeDesc:
+    "Nombre maximal de transferts de fichiers par exécution avant de reprendre (50–2000). Plus élevé = moins de reprises mais plus de mémoire par exécution. Par défaut 400.",
 
   // ---- Paramètres : actions & état ----
   headingActionsStatus: "4. Actions & état",
