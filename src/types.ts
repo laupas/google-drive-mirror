@@ -174,8 +174,6 @@ export interface DriveFile {
   modifiedTimeMs: number;
   md5Checksum?: string;
   size?: number;
-  trashed: boolean;
-  parents?: string[];
   /**
    * Path relative to the sync root folder, derived from the folder chain
    * (e.g. "sub/note.md"). Set by the recursive listFiles().

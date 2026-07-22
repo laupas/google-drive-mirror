@@ -101,8 +101,6 @@ describe("GoogleDriveClient.listFiles — Mapping", () => {
       modifiedTimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
       md5Checksum: "hash",
       size: 1234,
-      trashed: false,
-      parents: ["root"],
       relativePath: "note.md",
     });
   });
@@ -120,7 +118,6 @@ describe("GoogleDriveClient.listFiles — Mapping", () => {
     // Assert
     expect(files[0].modifiedTimeMs).toBe(0);
     expect(files[0].size).toBeUndefined();
-    expect(files[0].trashed).toBe(false);
   });
 
   it("folgt nextPageToken innerhalb eines Ordners und sammelt alle Dateien", async () => {

@@ -90,8 +90,6 @@ export class FakeDriveClient {
         modifiedTimeMs: e.modifiedTimeMs,
         md5Checksum: e.md5Checksum,
         size: e.size,
-        trashed: e.trashed,
-        parents: e.parents,
         relativePath: (e as RemoteEntry & { __path?: string }).__path,
       }));
     const folders: DriveFolder[] = [
@@ -191,8 +189,6 @@ export class FakeDriveClient {
       modifiedTimeMs: e.modifiedTimeMs,
       md5Checksum: e.md5Checksum,
       size: e.size,
-      trashed: e.trashed,
-      parents: e.parents,
     };
   }
 

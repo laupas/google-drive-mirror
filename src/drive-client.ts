@@ -9,8 +9,14 @@ const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 /** appProperties key under which the vault-relative path is stored. */
 const PATH_PROP = "obsidianPath";
 
+// NOTE: `appProperties` is deliberately NOT requested. It stores the legacy
+// obsidianPath fallback (still WRITTEN on upload), but the listing derives paths
+// from the actual folder structure and never reads it back — requesting it only
+// bloated every response page (extra parse memory during the large-Drive fetch).
+// `parents` IS kept: the Shared-Drive flat listing (buildSubtree) needs it to
+// rebuild the folder hierarchy.
 const FILE_FIELDS =
-  "id,name,mimeType,modifiedTime,md5Checksum,size,trashed,parents,appProperties,driveId";
+  "id,name,mimeType,modifiedTime,md5Checksum,size,trashed,parents,driveId";
 
 /**
  * For Shared Drives (Team Drives), all requests must set supportsAllDrives=true.
@@ -227,6 +233,18 @@ export class GoogleDriveClient {
       Math.min(this.listConcurrencyFn(), LIST_CONCURRENCY)
     );
 
+    // Throttle progress reporting. Emitting per folder fires thousands of
+    // status updates (each re-renders the status bar) on a large Drive — that
+    // overhead measurably slowed the fetch. Report at most ~twice a second; the
+    // final counts are emitted once after the loop.
+    let lastProgressMs = 0;
+    const reportProgress = (force = false): void => {
+      const now = Date.now();
+      if (!force && now - lastProgressMs < 500) return;
+      lastProgressMs = now;
+      onProgress?.({ foldersScanned: folders.length, filesFound: files.length });
+    };
+
     while (level.length > 0) {
       const nextLevel: { id: string; prefix: string }[] = [];
       await forEachPool(level, concurrency, async ({ id, prefix }) => {
@@ -241,12 +259,7 @@ export class GoogleDriveClient {
             files.push({ ...this.mapFile(f), relativePath });
           }
         }
-        // Report progress as each folder finishes, so a big listing shows steady
-        // movement instead of freezing between whole levels.
-        onProgress?.({
-          foldersScanned: folders.length,
-          filesFound: files.length,
-        });
+        reportProgress();
       });
       // Note: order within a level is no longer strictly input-order (folders
       // are reduced as they complete). relativePath is derived per item from its
@@ -254,6 +267,7 @@ export class GoogleDriveClient {
       // the reconciler (keyed by relativePath) does not depend on.
       level = nextLevel;
     }
+    reportProgress(true); // final counts
     return { files, folders };
   }
 
@@ -717,6 +731,12 @@ const FOLDER_MIME = "application/vnd.google-apps.folder";
 
 /** Maps a raw Drive API file to the internal DriveFile shape (pure). */
 function mapRawFile(f: RawDriveFile): DriveFile {
+  // Keep only what the reconciler / engine actually read downstream. `parents`
+  // and `trashed` are intentionally NOT retained: `trashed` is filtered on the
+  // raw item before mapping, and `parents` is used only transiently by the
+  // Shared-Drive subtree rebuild (on the raw item), never on a mapped DriveFile.
+  // Dropping them removes an array + a boolean per file across thousands of
+  // files — less resident memory and less allocation churn during the fetch.
   return {
     id: f.id,
     name: f.name,
@@ -724,8 +744,6 @@ function mapRawFile(f: RawDriveFile): DriveFile {
     modifiedTimeMs: f.modifiedTime ? Date.parse(f.modifiedTime) : 0,
     md5Checksum: f.md5Checksum,
     size: f.size ? Number(f.size) : undefined,
-    trashed: Boolean(f.trashed),
-    parents: f.parents,
   };
 }
 
