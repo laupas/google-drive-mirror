@@ -132,6 +132,9 @@ export const en = {
   debugLoggingName: "Debug logging",
   debugLoggingDesc:
     "Writes verbose info messages to the developer console. Enable only for troubleshooting.",
+  mobileListConcurrencyName: "Fetch parallelism (mobile)",
+  mobileListConcurrencyDesc:
+    "How many Drive folders are fetched in parallel while listing (1–16). Lower is safer on large Drives but slower; higher is faster but uses more memory and can crash the app on a big sync. Default 4. Only affects mobile.",
 
   // ---- Settings: actions & status (settings-tab.ts) ----
   headingActionsStatus: "4. Actions & status",

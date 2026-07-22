@@ -1,4 +1,4 @@
-import { Notice, Plugin, TAbstractFile, normalizePath } from "obsidian";
+import { Notice, Platform, Plugin, TAbstractFile, normalizePath } from "obsidian";
 import { GoogleDriveClient } from "./drive-client";
 import { OAuthManager } from "./oauth";
 import { SettingsTab } from "./settings-tab";
@@ -54,7 +54,13 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     setDebugLogging(this.settings.debugLogging);
 
     this.oauth = new OAuthManager(this.settings);
-    this.drive = new GoogleDriveClient(this.oauth);
+    this.drive = new GoogleDriveClient(
+      this.oauth,
+      undefined,
+      // Mobile listing fan-out is user-configurable (memory tuning); desktop
+      // stays at the fixed higher value (no memory pressure there).
+      () => (Platform.isMobile ? this.settings.mobileListConcurrency : 16)
+    );
 
     this.storage = new PluginStorage(this.app.vault, this.manifest.id);
 
@@ -214,15 +220,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     // Lightweight ticker so the elapsed time keeps updating even without new events.
     const ticker = window.setInterval(() => this.status.touch(), 1000);
     // Capture async failures that escape the engine's own try/catch (unhandled
-    // rejections / global errors) into the PERSISTENT log, so a failure that
-    // tears down the mobile WebView is still readable afterwards in "Show log".
-    // (A true OOM process-kill is NOT a JS error and cannot be caught anywhere;
-    // this surfaces everything that IS a catchable error.)
+    // rejections / global errors) during a run — logged (debug) rather than
+    // lost. (A true OOM process-kill is NOT a JS error and cannot be caught
+    // anywhere; this surfaces everything that IS a catchable error.)
     const stopDiag = this.installRunDiagnostics();
-    void this.status.appendNow(
-      "info",
-      `[diag] run start — targets=${targets.length}`
-    );
+    log.debug(`run start — targets=${targets.length}`);
     try {
       await this.withSuppressedEvents(async () => {
         for (const target of targets) {
@@ -244,9 +246,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
         }
       });
     } catch (e) {
-      // Anything the engine didn't catch lands here — flush it durably and
-      // surface it, instead of failing silently.
-      await this.status.appendNow("error", `[diag] runSync threw: ${errString(e)}`);
+      // Anything the engine didn't catch lands here — surface it instead of
+      // failing silently: error status + notice + console error.
       this.status.finish("error", t("engineNoticePrefix", { message: errString(e) }));
       if (showNotice) {
         new Notice(t("engineNoticePrefix", { message: errString(e) }), 15000);
@@ -256,7 +257,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       this.running = false;
       window.clearInterval(ticker);
       stopDiag();
-      void this.status.appendNow("info", "[diag] run end");
+      log.debug("run end");
       // The final status emit (finish()) fired while `running` was still true,
       // so subscribers that gate on isSyncing() (sync button, status bar) saw
       // the stale value. Notify once more now that the flag has cleared, so the
@@ -272,15 +273,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
    */
   private installRunDiagnostics(): () => void {
     const onRejection = (ev: PromiseRejectionEvent) => {
-      void this.status.appendNow(
-        "error",
-        `[diag] unhandledrejection: ${errString(ev.reason)}`
-      );
+      log.error("unhandledrejection during sync:", errString(ev.reason));
     };
     const onError = (ev: ErrorEvent) => {
-      void this.status.appendNow(
-        "error",
-        `[diag] window error: ${ev.message} @ ${ev.filename}:${ev.lineno}`
+      log.error(
+        `window error during sync: ${ev.message} @ ${ev.filename}:${ev.lineno}`
       );
     };
     window.addEventListener("unhandledrejection", onRejection);

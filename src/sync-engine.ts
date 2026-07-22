@@ -194,9 +194,8 @@ export class SyncEngine {
       // DIAGNOSTICS: durable (immediately-flushed) breadcrumbs around the
       // listing phase. A large sync crashes the iOS WebView here, so the last
       // surviving breadcrumb pinpoints how far the listing got.
-      void this.status.appendNow(
-        "info",
-        `[diag] local collected — files=${local.size}, mobile=${Platform.isMobile}`
+      log.debug(
+        `local collected — files=${local.size}, mobile=${Platform.isMobile}`
       );
 
       this.status.update(t("engineFetchingDrive"), 0);
@@ -214,21 +213,16 @@ export class SyncEngine {
             }),
             0
           );
-          // Durable breadcrumb throttled to ~once/2s so a crash mid-listing
-          // leaves a trail of the last folder/file counts reached.
+          // Debug breadcrumb throttled to ~once/2s so a debug session shows the
+          // listing advancing with the last folder/file counts reached.
           const now = Date.now();
           if (now - lastCrumbMs >= 2000) {
             lastCrumbMs = now;
-            void this.status.appendNow(
-              "info",
-              `[diag] listing — folders=${foldersScanned}, files=${filesFound}`
+            log.debug(
+              `listing — folders=${foldersScanned}, files=${filesFound}`
             );
           }
         }
-      );
-      void this.status.appendNow(
-        "info",
-        `[diag] drive listed — folders=${listing.folders.length}, files=${listing.files.length}`
       );
       log.info(
         `Drive listing done: ${listing.folders.length} folders, ${listing.files.length} files`

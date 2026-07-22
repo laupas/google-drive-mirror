@@ -173,24 +173,6 @@ export class SyncStatus {
     this.scheduleSave();
   }
 
-  /**
-   * Like `append`, but persists the log IMMEDIATELY (awaits `save()`) instead of
-   * debouncing. For diagnostics that must survive an imminent crash / WebView
-   * teardown — a debounced save can be lost if the process dies before the
-   * 1s timer fires. Best-effort: a write failure is swallowed.
-   */
-  async appendNow(level: LogEntry["level"], message: string): Promise<void> {
-    this.log.push({ ts: nowMs(), level, message });
-    if (this.log.length > this.maxLog) {
-      this.log.splice(0, this.log.length - this.maxLog);
-    }
-    this.emit();
-    try {
-      await this.save();
-    } catch {
-      /* Diagnostics must not throw. */
-    }
-  }
 
   finish(phase: "done" | "error", message: string): void {
     this.progress = {

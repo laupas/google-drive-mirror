@@ -41,15 +41,21 @@ const RETRY_BASE_MS = 500;
  */
 const LIST_CONCURRENCY = 16;
 /**
- * Lower listing fan-out on mobile. Each concurrent `listChildren` holds a parsed
- * response page (up to 1000 file records) in memory; 16 in flight on a large
- * Drive pushed the iOS WebView past its memory ceiling and OOM-killed it during
- * the "Fetching Google Drive" phase. Fewer in-flight pages = a lower peak.
+ * Default listing fan-out on mobile. Each concurrent `listChildren` holds a
+ * parsed response page (up to 1000 file records) in memory; 16 in flight on a
+ * large Drive pushed the iOS WebView past its memory ceiling and OOM-killed it
+ * during the "Fetching Google Drive" phase. Fewer in-flight pages = a lower
+ * peak. Now user-configurable (`settings.mobileListConcurrency`); this is the
+ * fallback default.
  */
 const LIST_CONCURRENCY_MOBILE = 4;
 
-/** Listing fan-out for the current platform. */
-function listConcurrency(): number {
+/**
+ * Default listing fan-out for the current platform (used when the client is
+ * constructed without an explicit provider — e.g. in tests). Desktop has no
+ * memory pressure, so it uses the higher fixed value.
+ */
+function defaultListConcurrency(): number {
   return Platform.isMobile ? LIST_CONCURRENCY_MOBILE : LIST_CONCURRENCY;
 }
 
@@ -112,10 +118,15 @@ export class GoogleDriveClient {
    * @param oauth    Token provider.
    * @param requestImpl  HTTP implementation (default: Obsidian's requestUrl).
    *                     Injectable so tests can verify retry/backoff.
+   * @param listConcurrencyFn  Returns how many Drive folders to list in
+   *                     parallel during the fetch phase. Injected from settings
+   *                     (mobile value is user-configurable). Defaults to the
+   *                     per-platform value.
    */
   constructor(
     private oauth: OAuthManager,
-    private requestImpl: RequestFn = defaultRequestImpl
+    private requestImpl: RequestFn = defaultRequestImpl,
+    private listConcurrencyFn: () => number = defaultListConcurrency
   ) {}
 
   private async authHeader(): Promise<Record<string, string>> {
@@ -209,7 +220,12 @@ export class GoogleDriveClient {
     let level: { id: string; prefix: string }[] = [
       { id: rootFolderId, prefix: "" },
     ];
-    const concurrency = listConcurrency();
+    // Clamp defensively: at least 1 (0 would stall the pool), capped so a
+    // misconfigured huge value can't reintroduce the memory blow-up.
+    const concurrency = Math.max(
+      1,
+      Math.min(this.listConcurrencyFn(), LIST_CONCURRENCY)
+    );
 
     while (level.length > 0) {
       const nextLevel: { id: string; prefix: string }[] = [];

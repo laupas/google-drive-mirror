@@ -136,6 +136,9 @@ export const it: Partial<Messages> = {
   debugLoggingName: "Log di debug",
   debugLoggingDesc:
     "Scrive messaggi informativi dettagliati nella console per sviluppatori. Abilita solo per la risoluzione dei problemi.",
+  mobileListConcurrencyName: "Parallelismo di recupero (mobile)",
+  mobileListConcurrencyDesc:
+    "Quante cartelle di Drive vengono recuperate in parallelo durante l'elenco (1–16). Un valore più basso è più sicuro su Drive grandi ma più lento; uno più alto è più veloce ma usa più memoria e può far bloccare l'app durante una sincronizzazione grande. Predefinito 4. Riguarda solo il dispositivo mobile.",
 
   // ---- Impostazioni: azioni & stato ----
   headingActionsStatus: "4. Azioni & stato",
