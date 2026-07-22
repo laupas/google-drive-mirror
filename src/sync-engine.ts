@@ -197,8 +197,17 @@ export class SyncEngine {
       this.status.update(t("engineReadingLocal"), 0);
       const local = await this.collectLocal();
       const localFolders = this.collectLocalFolders(local.keys());
+      // DIAGNOSTICS: flush a breadcrumb after each major phase so, if the
+      // mobile WebView is torn down mid-run (no JS error, execution just
+      // stops), the persistent log shows exactly which phase it died in.
+      void this.status.appendNow(
+        "info",
+        `[diag] local collected — files=${local.size}`
+      );
 
       this.status.update(t("engineFetchingDrive"), 0);
+      // Throttle the listing breadcrumb so it flushes at most ~once/2s.
+      let lastListCrumbMs = 0;
       const listing = await this.drive.listFiles(
         this.active.driveFolderId,
         this.active.driveSharedId || undefined,
@@ -212,7 +221,19 @@ export class SyncEngine {
             }),
             0
           );
+          const now = Date.now();
+          if (now - lastListCrumbMs >= 2000) {
+            lastListCrumbMs = now;
+            void this.status.appendNow(
+              "info",
+              `[diag] listing — folders=${foldersScanned}, files=${filesFound}`
+            );
+          }
         }
+      );
+      void this.status.appendNow(
+        "info",
+        `[diag] drive listed — folders=${listing.folders.length}, files=${listing.files.length}`
       );
       log.info(
         `Drive listing done: ${listing.folders.length} folders, ${listing.files.length} files`
