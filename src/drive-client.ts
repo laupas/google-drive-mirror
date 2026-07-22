@@ -187,7 +187,8 @@ export class GoogleDriveClient {
   async listFiles(
     rootFolderId: string,
     driveId?: string,
-    onProgress?: (progress: ListProgress) => void
+    onProgress?: (progress: ListProgress) => void,
+    onFile?: (file: DriveFile) => void
   ): Promise<{ files: DriveFile[]; folders: DriveFolder[] }> {
     // Shared Drive: list the WHOLE drive in one paginated query (no parent
     // filter) and rebuild the subtree locally. This turns thousands of
@@ -195,10 +196,16 @@ export class GoogleDriveClient {
     // on a large drive. Only safe for a Shared Drive, where corpora=drive scopes
     // the query to exactly that drive; on My Drive a parent-less query would
     // return the entire account, so My Drive keeps the BFS below.
+    //
+    // `onFile`: when provided, each file is streamed to the callback and NOT
+    // accumulated in the returned `files` array (which stays empty). The caller
+    // can then spill files to disk one at a time instead of holding the whole
+    // listing in memory (iOS OOM guard on large Drives). Folders are always
+    // returned in-memory (needed for BFS traversal; far fewer than files).
     if (driveId) {
-      return this.listFilesFlat(rootFolderId, driveId, onProgress);
+      return this.listFilesFlat(rootFolderId, driveId, onProgress, onFile);
     }
-    return this.listFilesBfs(rootFolderId, onProgress);
+    return this.listFilesBfs(rootFolderId, onProgress, onFile);
   }
 
   /**
@@ -207,10 +214,20 @@ export class GoogleDriveClient {
    */
   private async listFilesBfs(
     rootFolderId: string,
-    onProgress?: (progress: ListProgress) => void
+    onProgress?: (progress: ListProgress) => void,
+    onFile?: (file: DriveFile) => void
   ): Promise<{ files: DriveFile[]; folders: DriveFolder[] }> {
+    // When `onFile` is provided, files are streamed to it and not accumulated
+    // (the returned `files` stays empty) — see listFiles(). `fileCount` tracks
+    // the number seen either way, for progress reporting.
     const files: DriveFile[] = [];
     const folders: DriveFolder[] = [];
+    let fileCount = 0;
+    const emitFile = (file: DriveFile): void => {
+      fileCount++;
+      if (onFile) onFile(file);
+      else files.push(file);
+    };
     // Breadth-first search over the folder hierarchy. Each level is listed with
     // bounded concurrency: the listing is latency-bound (one round-trip per
     // folder), so listing siblings in parallel is the dominant speed-up on a
@@ -242,7 +259,7 @@ export class GoogleDriveClient {
       const now = Date.now();
       if (!force && now - lastProgressMs < 500) return;
       lastProgressMs = now;
-      onProgress?.({ foldersScanned: folders.length, filesFound: files.length });
+      onProgress?.({ foldersScanned: folders.length, filesFound: fileCount });
     };
 
     while (level.length > 0) {
@@ -256,7 +273,7 @@ export class GoogleDriveClient {
             folders.push({ id: f.id, relativePath });
             nextLevel.push({ id: f.id, prefix: relativePath });
           } else {
-            files.push({ ...this.mapFile(f), relativePath });
+            emitFile({ ...this.mapFile(f), relativePath });
           }
         }
         reportProgress();
@@ -281,7 +298,8 @@ export class GoogleDriveClient {
   private async listFilesFlat(
     rootFolderId: string,
     driveId: string,
-    onProgress?: (progress: ListProgress) => void
+    onProgress?: (progress: ListProgress) => void,
+    onFile?: (file: DriveFile) => void
   ): Promise<{ files: DriveFile[]; folders: DriveFolder[] }> {
     // 1) Fetch all items in the drive, reporting progress per page.
     const all: RawDriveFile[] = [];
@@ -317,7 +335,7 @@ export class GoogleDriveClient {
     } while (pageToken);
 
     // 2) Rebuild the subtree rooted at rootFolderId from the parent links.
-    return buildSubtree(all, rootFolderId, onProgress);
+    return buildSubtree(all, rootFolderId, onProgress, onFile);
   }
 
   /** Lists the direct children of a folder (with pagination). */
@@ -763,10 +781,17 @@ function mapRawFile(f: RawDriveFile): DriveFile {
 export function buildSubtree(
   items: RawDriveFile[],
   rootFolderId: string,
-  onProgress?: (progress: ListProgress) => void
+  onProgress?: (progress: ListProgress) => void,
+  onFile?: (file: DriveFile) => void
 ): { files: DriveFile[]; folders: DriveFolder[] } {
   const files: DriveFile[] = [];
   const folders: DriveFolder[] = [];
+  let fileCount = 0;
+  const emitFile = (file: DriveFile): void => {
+    fileCount++;
+    if (onFile) onFile(file);
+    else files.push(file);
+  };
 
   // Index children by their (first) parent id, preserving input order.
   const childrenByParent = new Map<string, RawDriveFile[]>();
@@ -796,11 +821,11 @@ export function buildSubtree(
           folders.push({ id: f.id, relativePath });
           nextLevel.push({ id: f.id, prefix: relativePath });
         } else {
-          files.push({ ...mapRawFile(f), relativePath });
+          emitFile({ ...mapRawFile(f), relativePath });
         }
       }
     }
-    onProgress?.({ foldersScanned: folders.length, filesFound: files.length });
+    onProgress?.({ foldersScanned: folders.length, filesFound: fileCount });
     level = nextLevel;
   }
 

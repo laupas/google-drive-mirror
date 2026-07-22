@@ -200,12 +200,18 @@ export class SyncEngine {
 
       this.status.update(t("engineFetchingDrive"), 0);
       let lastCrumbMs = 0;
+      // MEMORY (iOS OOM guard): stream each fetched file to a temp JSONL spill
+      // file instead of accumulating the whole listing in RAM. Filters are
+      // applied HERE (in onFile) exactly as they were when building remoteByPath
+      // from an in-memory array — an ignored/excluded/system/google-apps file
+      // is never spilled, so it can never look "deleted on one side" (deletion
+      // safety). Grouping by path (dedup) happens on read-back below.
+      await this.state.spillBegin();
+      let spilledFiles = 0;
       const listing = await this.drive.listFiles(
         this.active.driveFolderId,
         this.active.driveSharedId || undefined,
         ({ foldersScanned, filesFound }) => {
-          // Reflect the recursive listing advancing (one update per folder
-          // level) so a large Drive doesn't look frozen on "Fetching…".
           this.status.update(
             t("engineFetchingDriveProgress", {
               folders: foldersScanned,
@@ -213,8 +219,6 @@ export class SyncEngine {
             }),
             0
           );
-          // Debug breadcrumb throttled to ~once/2s so a debug session shows the
-          // listing advancing with the last folder/file counts reached.
           const now = Date.now();
           if (now - lastCrumbMs >= 2000) {
             lastCrumbMs = now;
@@ -222,36 +226,52 @@ export class SyncEngine {
               `listing — folders=${foldersScanned}, files=${filesFound}`
             );
           }
+        },
+        // onFile: apply the same remote-side filters, then spill a lean record.
+        (f) => {
+          if (isGoogleAppsFile(f.mimeType)) return;
+          const path = normalizePath(this.drive.pathOf(f));
+          if (isSystemPath(path, this.vault.configDir)) return;
+          if (!this.extensionAllowed(path)) return;
+          if (this.isIgnored(path)) return;
+          if (this.isExcluded(path)) return;
+          spilledFiles++;
+          void this.state.spillAppend({
+            p: path,
+            i: f.id,
+            m: f.md5Checksum,
+            s: f.size,
+            t: f.modifiedTimeMs,
+          });
         }
       );
+      await this.state.spillFlush();
       log.info(
-        `Drive listing done: ${listing.folders.length} folders, ${listing.files.length} files`
+        `Drive listing done: ${listing.folders.length} folders, ${spilledFiles} files (spilled)`
       );
 
-      // Index files by vault-relative path.
+      // Rebuild the remote map by streaming the spilled records back (one line
+      // at a time — never the whole parsed graph). Group by path first, then
+      // resolve duplicates, EXACTLY as the previous in-memory path did.
       //
-      // Drive allows MULTIPLE non-trashed files with the same name in the
-      // same folder (different IDs). Mapped to the same vault-relative path
-      // they would overwrite each other in a map — the
-      // reconciler would see only one, and a deleteRemote/conflict might hit the
-      // wrong ID. Therefore first GROUP by path, then resolve.
+      // Drive allows MULTIPLE non-trashed files with the same name in the same
+      // folder (different IDs). Mapped to the same vault-relative path they would
+      // overwrite each other; a deleteRemote/conflict might hit the wrong ID.
+      // Therefore group by path, then resolve.
       const remoteByPath = new Map<string, DriveFile[]>();
-      for (const f of listing.files) {
-        // Google Editors files (Docs/Sheets/Slides) have no
-        // downloadable binary content -> always skip.
-        if (isGoogleAppsFile(f.mimeType)) continue;
-        const path = normalizePath(this.drive.pathOf(f));
-        // Never download system folders (config dir / .trash / …).
-        if (isSystemPath(path, this.vault.configDir)) continue;
-        // Optional file-extension filter (also applies to the Drive side).
-        if (!this.extensionAllowed(path)) continue;
-        // Ignore patterns (blacklist) — on both sides, see collectLocal().
-        if (this.isIgnored(path)) continue;
-        // Excluded folders (other targets' scopes + user excludeFolders).
-        if (this.isExcluded(path)) continue;
-        const list = remoteByPath.get(path);
+      for await (const rec of this.state.spillRead()) {
+        const f: DriveFile = {
+          id: rec.i,
+          name: "",
+          mimeType: "",
+          modifiedTimeMs: rec.t,
+          md5Checksum: rec.m,
+          size: rec.s,
+          relativePath: rec.p,
+        };
+        const list = remoteByPath.get(rec.p);
         if (list) list.push(f);
-        else remoteByPath.set(path, [f]);
+        else remoteByPath.set(rec.p, [f]);
       }
 
       // Resolve collisions: If ALL duplicates have IDENTICAL CONTENT (same,
@@ -551,6 +571,12 @@ export class SyncEngine {
     } finally {
       // Safety net in case a path above did not reset the flag.
       this.running = false;
+      // Always drop the temp fetch-spill file (best-effort; never throws).
+      try {
+        await this.state.spillDiscard();
+      } catch (e) {
+        log.warn("Konnte Fetch-Spill nicht entfernen:", e);
+      }
     }
   }
 

@@ -18,6 +18,20 @@ export function isStateFile(fileName: string): boolean {
   return fileName.startsWith(STATE_FILE_PREFIX) && fileName.endsWith(".json");
 }
 
+/**
+ * Lean, spilled representation of ONE fetched Drive file, written one-per-line
+ * to a temp JSONL file during listing so the whole listing never sits in
+ * memory (iOS OOM guard on large Drives). Short keys keep the text small:
+ * p=path, i=driveId, m=md5, s=size, t=modifiedTimeMs.
+ */
+export interface SpilledRemoteFile {
+  p: string;
+  i: string;
+  m?: string;
+  s?: number;
+  t: number;
+}
+
 /** Serialization format of the state file. */
 interface StateFile {
   version: 1;
@@ -116,6 +130,75 @@ export class SyncStateStore {
   /** Deletes the underlying state file (e.g. when a target is removed). */
   async destroy(): Promise<void> {
     await this.storage.remove(this.fileName);
+    await this.storage.remove(this.spillFileName());
+  }
+
+  // ---- Fetch spill (temp JSONL) ----
+  //
+  // During listing, fetched remote files are appended here one line at a time
+  // and dropped from memory, so a huge Drive listing doesn't accumulate in RAM
+  // (iOS OOM). After listing, `spillRead()` streams them back to rebuild the
+  // remote map for reconciliation. The file is a sibling of the state file,
+  // e.g. `sync-fetch-<id>.jsonl`, and is always removed at the end of a run.
+
+  private spillBuffer: string[] = [];
+
+  /** Temp spill file name derived from the state file name. */
+  private spillFileName(): string {
+    // sync-state-<id>.json -> sync-fetch-<id>.jsonl ; sync-state.json -> sync-fetch.jsonl
+    const base = this.fileName
+      .replace(/^sync-state/, "sync-fetch")
+      .replace(/\.json$/, ".jsonl");
+    return base === this.fileName ? `${this.fileName}.fetch.jsonl` : base;
+  }
+
+  /** Starts a fresh spill: removes any stale temp file and clears the buffer. */
+  async spillBegin(): Promise<void> {
+    this.spillBuffer = [];
+    await this.storage.remove(this.spillFileName());
+  }
+
+  /**
+   * Buffers one spilled file record; flushes to disk in batches to avoid
+   * thousands of tiny append calls. Call `spillFlush()` after the listing.
+   */
+  async spillAppend(rec: SpilledRemoteFile): Promise<void> {
+    this.spillBuffer.push(JSON.stringify(rec));
+    if (this.spillBuffer.length >= 500) await this.spillFlush();
+  }
+
+  /** Writes any buffered spill records to disk. */
+  async spillFlush(): Promise<void> {
+    if (this.spillBuffer.length === 0) return;
+    const chunk = this.spillBuffer.join("\n") + "\n";
+    this.spillBuffer = [];
+    await this.storage.appendText(this.spillFileName(), chunk);
+  }
+
+  /**
+   * Reads the spilled records back, parsing one line at a time (so the whole
+   * parsed object graph never exists at once — only the raw text string plus
+   * the currently-yielded record). Returns [] if nothing was spilled.
+   */
+  async *spillRead(): AsyncGenerator<SpilledRemoteFile> {
+    await this.spillFlush();
+    const text = await this.storage.readText(this.spillFileName());
+    if (!text) return;
+    let start = 0;
+    while (start < text.length) {
+      let nl = text.indexOf("\n", start);
+      if (nl === -1) nl = text.length;
+      const line = text.slice(start, nl).trim();
+      start = nl + 1;
+      if (!line) continue;
+      yield JSON.parse(line) as SpilledRemoteFile;
+    }
+  }
+
+  /** Removes the temp spill file (call in a finally at run end). */
+  async spillDiscard(): Promise<void> {
+    this.spillBuffer = [];
+    await this.storage.remove(this.spillFileName());
   }
 
   getLastSyncMs(): number {

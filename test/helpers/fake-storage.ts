@@ -7,6 +7,8 @@ import { PluginStorage } from "../../src/storage";
 
 export class FakeStorage {
   private files = new Map<string, unknown>();
+  /** Raw text files (spill JSONL) — kept separate from JSON files. */
+  private texts = new Map<string, string>();
   /** Test assertion: how often each file was written (for checkpoint tests). */
   private writes = new Map<string, number>();
 
@@ -21,8 +23,17 @@ export class FakeStorage {
     this.writes.set(fileName, (this.writes.get(fileName) ?? 0) + 1);
   }
 
+  async appendText(fileName: string, text: string): Promise<void> {
+    this.texts.set(fileName, (this.texts.get(fileName) ?? "") + text);
+  }
+
+  async readText(fileName: string): Promise<string> {
+    return this.texts.get(fileName) ?? "";
+  }
+
   async remove(fileName: string): Promise<void> {
     this.files.delete(fileName);
+    this.texts.delete(fileName);
   }
 
   /** Test assertion: raw JSON data of a file (or undefined). */

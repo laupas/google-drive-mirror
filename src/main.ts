@@ -180,7 +180,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       .map((tg) => tg.localFolder.trim());
   }
 
-  /** Deletes `sync-state-*.json` files that don't belong to a current target. */
+  /**
+   * Deletes `sync-state-*.json` files that don't belong to a current target,
+   * and any leftover `sync-fetch-*.jsonl` temp spill files (always transient —
+   * a run removes its own in a finally; a hard crash mid-fetch could leave one).
+   */
   private async cleanupOrphanStateFiles(): Promise<void> {
     const valid = new Set(
       this.settings.targets.map((tg) => stateFileName(tg.id))
@@ -190,6 +194,10 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       if (isStateFile(name) && !valid.has(name)) {
         await this.storage.remove(name);
         log.info("Verwaiste Sync-State-Datei entfernt:", name);
+      } else if (name.startsWith("sync-fetch-") && name.endsWith(".jsonl")) {
+        // Temp fetch-spill file; never meant to persist across loads.
+        await this.storage.remove(name);
+        log.info("Verwaiste Fetch-Spill-Datei entfernt:", name);
       }
     }
   }

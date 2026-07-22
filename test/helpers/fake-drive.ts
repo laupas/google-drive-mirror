@@ -77,11 +77,13 @@ export class FakeDriveClient {
 
   async listFiles(
     _rootFolderId: string,
-    _driveId?: string
+    _driveId?: string,
+    _onProgress?: (p: { foldersScanned: number; filesFound: number }) => void,
+    onFile?: (file: DriveFile) => void
   ): Promise<{ files: DriveFile[]; folders: DriveFolder[] }> {
     // The real client no longer returns trashed files (filtered during the
     // recursive listing); the fake mirrors that.
-    const files = [...this.store.values()]
+    const mapped = [...this.store.values()]
       .filter((e) => !e.trashed)
       .map((e) => ({
         id: e.id,
@@ -92,6 +94,15 @@ export class FakeDriveClient {
         size: e.size,
         relativePath: (e as RemoteEntry & { __path?: string }).__path,
       }));
+    // Mirror the real client's `onFile` streaming contract: when provided,
+    // stream each file and return an empty `files` array (the engine spills
+    // them to disk). Otherwise return them in-memory.
+    let files: DriveFile[] = [];
+    if (onFile) {
+      for (const f of mapped) onFile(f);
+    } else {
+      files = mapped;
+    }
     const folders: DriveFolder[] = [
       ...[...this.folders.entries()].map(
         ([relativePath, id]) => ({ id, relativePath })

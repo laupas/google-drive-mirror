@@ -34,6 +34,28 @@ export class PluginStorage {
     await this.vault.adapter.write(p, JSON.stringify(data));
   }
 
+  /**
+   * Appends a raw text chunk to a file (creating it if absent). Used to spill
+   * the Drive listing to a temp JSONL file one record at a time during the
+   * fetch, so the whole listing never has to sit in memory (iOS OOM guard).
+   */
+  async appendText(fileName: string, text: string): Promise<void> {
+    const p = this.path(fileName);
+    await this.vault.adapter.append(p, text);
+  }
+
+  /** Reads a file as raw text; returns "" if missing/unreadable. */
+  async readText(fileName: string): Promise<string> {
+    const p = this.path(fileName);
+    try {
+      if (!(await this.vault.adapter.exists(p))) return "";
+      return await this.vault.adapter.read(p);
+    } catch (e) {
+      log.error(`Konnte ${fileName} nicht lesen:`, e);
+      return "";
+    }
+  }
+
   /** Deletes a file if it exists. */
   async remove(fileName: string): Promise<void> {
     const p = this.path(fileName);
