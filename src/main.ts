@@ -1,4 +1,4 @@
-import { Notice, Plugin, TAbstractFile, normalizePath } from "obsidian";
+import { Notice, Platform, Plugin, TAbstractFile, normalizePath } from "obsidian";
 import { GoogleDriveClient } from "./drive-client";
 import { OAuthManager } from "./oauth";
 import { SettingsTab } from "./settings-tab";
@@ -24,6 +24,19 @@ interface TargetRuntime {
 }
 
 /**
+ * Minimal shape of the Screen Wake Lock API — the Obsidian lint/build lib does
+ * not ship these DOM types, so we declare only what we use (mirrors the local
+ * Node-interface pattern in `oauth-loopback.ts`).
+ */
+interface WakeLockSentinelLike {
+  release(): Promise<void>;
+  addEventListener(type: "release", listener: () => void): void;
+}
+interface WakeLockLike {
+  request(type: "screen"): Promise<WakeLockSentinelLike>;
+}
+
+/**
  * Plugin entry point. Wires up OAuth, Drive client and one sync engine PER
  * configured target, plus the auto-sync triggers (local vault events + Drive
  * poll interval). All targets share the same OAuth account and status/log, but
@@ -40,6 +53,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   private runtimes = new Map<string, TargetRuntime>();
   /** True while a (multi-target) sync run is in progress. */
   private running = false;
+  /** Held Screen Wake Lock while a sync runs (mobile only); null otherwise. */
+  private wakeLock: WakeLockSentinelLike | null = null;
 
   private pollHandle: number | null = null;
   private debounceHandle: number | null = null;
@@ -213,6 +228,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.running = true;
     // Lightweight ticker so the elapsed time keeps updating even without new events.
     const ticker = window.setInterval(() => this.status.touch(), 1000);
+    await this.acquireWakeLock();
     try {
       await this.withSuppressedEvents(async () => {
         for (const target of targets) {
@@ -224,6 +240,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     } finally {
       this.running = false;
       window.clearInterval(ticker);
+      await this.releaseWakeLock();
       // The final status emit (finish()) fired while `running` was still true,
       // so subscribers that gate on isSyncing() (sync button, status bar) saw
       // the stale value. Notify once more now that the flag has cleared, so the
@@ -235,6 +252,42 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   /** Is a sync currently running? (for the UI). */
   isSyncing(): boolean {
     return this.running;
+  }
+
+  /**
+   * Acquire a Screen Wake Lock so the device doesn't sleep mid-sync. Mobile
+   * only (a desktop foreground app doesn't have this problem) and only when the
+   * user enabled it. Best-effort: any failure (API missing, request rejected
+   * because the app isn't visible) is logged and swallowed — it must never
+   * break the sync.
+   */
+  private async acquireWakeLock(): Promise<void> {
+    if (!this.settings.preventSleepDuringSync || !Platform.isMobile) return;
+    const wl = (navigator as unknown as { wakeLock?: WakeLockLike }).wakeLock;
+    if (!wl) return;
+    try {
+      const sentinel = await wl.request("screen");
+      this.wakeLock = sentinel;
+      // The OS can release the lock on its own (e.g. app backgrounded); keep
+      // our reference in sync so releaseWakeLock() doesn't touch a dead handle.
+      sentinel.addEventListener("release", () => {
+        if (this.wakeLock === sentinel) this.wakeLock = null;
+      });
+    } catch (e) {
+      log.warn("Wake lock request failed", e);
+    }
+  }
+
+  /** Release the Screen Wake Lock if one is held. Best-effort (log-only). */
+  private async releaseWakeLock(): Promise<void> {
+    const sentinel = this.wakeLock;
+    if (!sentinel) return;
+    this.wakeLock = null;
+    try {
+      await sentinel.release();
+    } catch (e) {
+      log.warn("Wake lock release failed", e);
+    }
   }
 
   /** Updates the status bar based on the current sync status. */

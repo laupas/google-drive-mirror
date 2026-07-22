@@ -135,6 +135,9 @@ export const de: Partial<Messages> = {
   debugLoggingName: "Debug-Logging",
   debugLoggingDesc:
     "Schreibt ausführliche Info-Meldungen in die Developer-Console. Nur zur Fehlersuche aktivieren.",
+  preventSleepName: "Gerät während der Synchronisierung wach halten",
+  preventSleepDesc:
+    "Hält auf Mobilgeräten den Bildschirm während einer laufenden Synchronisierung wach, damit das Gerät sie nicht unterbricht. Keine Wirkung auf dem Desktop.",
 
   // ---- Einstellungen: Aktionen & Status ----
   headingActionsStatus: "4. Aktionen & Status",

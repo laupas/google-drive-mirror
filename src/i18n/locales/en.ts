@@ -132,6 +132,9 @@ export const en = {
   debugLoggingName: "Debug logging",
   debugLoggingDesc:
     "Writes verbose info messages to the developer console. Enable only for troubleshooting.",
+  preventSleepName: "Keep device awake during sync",
+  preventSleepDesc:
+    "On mobile, keeps the screen awake while a sync is running so the device doesn't interrupt it. No effect on desktop.",
 
   // ---- Settings: actions & status (settings-tab.ts) ----
   headingActionsStatus: "4. Actions & status",

@@ -108,6 +108,13 @@ export interface PluginSettings {
    * so the console only shows errors (Obsidian guideline).
    */
   debugLogging: boolean;
+
+  /**
+   * Keep the device awake while a sync is running. Only has an effect on
+   * mobile (via the Screen Wake Lock API); a phone can otherwise lock the
+   * screen mid-sync and suspend the WebView. No effect on desktop.
+   */
+  preventSleepDuringSync: boolean;
 }
 
 /**
@@ -217,6 +224,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   localDebounceMs: 2500,
   logRetentionHours: 24,
   debugLogging: false,
+  preventSleepDuringSync: false,
 };
 
 /** Builds a fresh, empty sync target with sensible defaults. */

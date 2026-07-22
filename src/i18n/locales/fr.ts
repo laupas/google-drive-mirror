@@ -138,6 +138,9 @@ export const fr: Partial<Messages> = {
   debugLoggingName: "Journalisation de débogage",
   debugLoggingDesc:
     "Écrit des messages d'information détaillés dans la console de développement. À activer uniquement pour le dépannage.",
+  preventSleepName: "Garder l'appareil actif pendant la synchronisation",
+  preventSleepDesc:
+    "Sur mobile, garde l'écran allumé pendant qu'une synchronisation est en cours afin que l'appareil ne l'interrompe pas. Sans effet sur ordinateur.",
 
   // ---- Paramètres : actions & état ----
   headingActionsStatus: "4. Actions & état",
