@@ -119,6 +119,10 @@ export class FakeDriveClient {
     return e.content;
   }
 
+  downloadTransport(): "fetch" | "requestUrl" | "unknown" {
+    return "unknown";
+  }
+
   async createFile(
     _rootFolderId: string,
     path: string,

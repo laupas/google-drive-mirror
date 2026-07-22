@@ -381,6 +381,17 @@ export class GoogleDriveClient {
     return f.relativePath ?? f.name;
   }
 
+  /**
+   * Which transport the last download used: "fetch" (native, bypasses the
+   * requestUrl base64 bridge), "requestUrl" (fallback), or "unknown" (no
+   * download yet). Surfaced in the visible sync log so mobile users can tell
+   * which path is active without a console.
+   */
+  downloadTransport(): "fetch" | "requestUrl" | "unknown" {
+    if (this.fetchDownloadsWork === undefined) return "unknown";
+    return this.fetchDownloadsWork ? "fetch" : "requestUrl";
+  }
+
   /** Downloads the binary content of a file. */
   async downloadFile(driveId: string): Promise<ArrayBuffer> {
     const url = `${DRIVE_API}/files/${driveId}?alt=media&${SUPPORTS_ALL_DRIVES}`;

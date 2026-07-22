@@ -392,6 +392,21 @@ export class SyncEngine {
         remoteCount
       );
 
+      // Surface which download transport was used, in the VISIBLE log (so mobile
+      // users can see it without a console). "fetch" = native (bypasses the
+      // requestUrl base64 bridge → the iOS OOM workaround); "requestUrl" = the
+      // fallback (fetch was blocked, e.g. CORS). Only meaningful if something
+      // was downloaded this run.
+      const transport = this.drive.downloadTransport();
+      if (summary.downloaded > 0 && transport !== "unknown") {
+        this.status.append(
+          "info",
+          transport === "fetch"
+            ? "⚙︎ Downloads: native fetch (bridge bypassed)"
+            : "⚙︎ Downloads: requestUrl (fetch unavailable)"
+        );
+      }
+
       // When the run was capped (mobile batch limit), the file transfers are
       // only partially done, so the base does not yet reflect the final state.
       // Folder deletes and the noopFolder refresh MUST NOT run now: deleting a
