@@ -132,4 +132,40 @@ describe("IndexedDbRemoteStore (real IndexedDB via fake-indexeddb)", () => {
     expect(await s.count()).toBe(500);
     await s.dispose();
   });
+
+  it("forEachBatch (windowed cursor) covers every record exactly once at scale", async () => {
+    // Guards the windowed-cursor rewrite: no all-keys array, paged by last key.
+    const s = await freshStore();
+    const N = 450;
+    for (let n = 0; n < N; n++) {
+      // zero-padded so key order is stable/deterministic
+      await s.put(rec(`f${String(n).padStart(4, "0")}.md`, `d${n}`, "m"));
+    }
+    const seen = new Set<string>();
+    await s.forEachBatch(100, async (batch) => {
+      for (const r of batch) {
+        expect(seen.has(r.path)).toBe(false); // no duplicates across windows
+        seen.add(r.path);
+      }
+    });
+    expect(seen.size).toBe(N);
+    await s.dispose();
+  });
+});
+
+describe("IndexedDbRemoteStore static helpers", () => {
+  it("listDatabaseNames + deleteDatabase enable orphan cleanup", async () => {
+    const a = await IndexedDbRemoteStore.open("gds-remote-alpha");
+    await a.put(rec("x.md", "d1", "m"));
+    a.dispose(); // close, do NOT delete (reused per target)
+
+    const names = await IndexedDbRemoteStore.listDatabaseNames();
+    // fake-indexeddb supports databases(); if null the runtime can't enumerate.
+    if (names) {
+      expect(names).toContain("gds-remote-alpha");
+      await IndexedDbRemoteStore.deleteDatabase("gds-remote-alpha");
+      const after = await IndexedDbRemoteStore.listDatabaseNames();
+      expect(after).not.toContain("gds-remote-alpha");
+    }
+  });
 });

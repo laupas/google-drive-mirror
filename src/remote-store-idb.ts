@@ -22,6 +22,14 @@ interface StoredRecord extends RemoteRecord {
 
 const STORE = "remote";
 
+/** Prefix for all per-target remote-store databases (used for orphan cleanup). */
+export const REMOTE_DB_PREFIX = "gds-remote-";
+
+/** Deterministic per-target remote-store DB name. */
+export function remoteDbName(targetId: string): string {
+  return `${REMOTE_DB_PREFIX}${targetId}`;
+}
+
 // Resolve the IndexedDB globals via globalThis. Bare `indexedDB` references
 // don't reliably resolve to a polyfilled global in the Node test environment;
 // going through globalThis works both in the WebView and under fake-indexeddb.
@@ -171,24 +179,55 @@ export class IndexedDbRemoteStore implements RemoteStore {
     batchSize: number,
     fn: (batch: RemoteRecord[]) => Promise<void>
   ): Promise<void> {
-    // Collect keys first (cheap: strings), then fetch+process in batches so we
-    // never hold more than one batch of full records, and the callback's async
-    // work isn't done inside a live cursor transaction.
-    const keys: string[] = [];
-    await this.cursorEach((r) => {
-      if (!r.ambiguous) keys.push(r.path);
-    });
-    let batch: RemoteRecord[] = [];
-    for (const key of keys) {
-      const rec = await this.get(key);
-      if (!rec) continue;
-      batch.push(rec);
-      if (batch.length >= batchSize) {
-        await fn(batch);
-        batch = [];
-      }
+    // Window the cursor: read up to `batchSize` records from ONE cursor
+    // transaction (synchronously, so the tx stays alive), close it, then await
+    // the callback OUTSIDE any transaction, then resume after the last key via
+    // a lowerBound range. This avoids (a) materializing the whole key set in
+    // memory and (b) one transaction per record — the previous approach did
+    // both, which spiked memory/churn at the start of a large reconcile.
+    let after: string | undefined = undefined;
+    for (;;) {
+      const batch = await this.readWindow(after, batchSize);
+      if (batch.length === 0) break;
+      after = batch[batch.length - 1].path;
+      const records = batch
+        .filter((r) => !r.ambiguous)
+        .map((r) => this.strip(r));
+      if (records.length > 0) await fn(records);
+      if (batch.length < batchSize) break; // last window
     }
-    if (batch.length > 0) await fn(batch);
+  }
+
+  /**
+   * Reads up to `limit` raw records with path > `after` (or from the start),
+   * in key order, within a single readonly transaction. Includes ambiguous rows
+   * (the caller filters) so paging by last key stays correct.
+   */
+  private readWindow(
+    after: string | undefined,
+    limit: number
+  ): Promise<StoredRecord[]> {
+    if (!this.db) throw new Error("RemoteStore not open");
+    return new Promise((resolve, reject) => {
+      const out: StoredRecord[] = [];
+      const range =
+        after === undefined
+          ? undefined
+          : idbKeyRange().lowerBound(after, true);
+      const req = this.db!.transaction(STORE, "readonly")
+        .objectStore(STORE)
+        .openCursor(range);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor || out.length >= limit) {
+          resolve(out);
+          return;
+        }
+        out.push(cursor.value as StoredRecord);
+        cursor.continue();
+      };
+    });
   }
 
   async hasSubtreeFiles(folderPath: string): Promise<boolean> {
@@ -218,16 +257,38 @@ export class IndexedDbRemoteStore implements RemoteStore {
   }
 
   async dispose(): Promise<void> {
+    // Just CLOSE the connection (do NOT delete). The DB is reused per target
+    // across runs; sync() clears it at the next run start. Deleting on dispose
+    // caused a reopen race with the immediately-following auto-resume batch.
     if (this.db) {
       this.db.close();
       this.db = null;
     }
-    await new Promise<void>((resolve) => {
-      const req = idb().deleteDatabase(this.dbName);
+  }
+
+  /** Deletes an IndexedDB database by name (best-effort). Static so callers can
+   *  clean up orphans/stale DBs without opening them. */
+  static deleteDatabase(name: string): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const req = idb().deleteDatabase(name);
       req.onsuccess = () => resolve();
-      req.onerror = () => resolve(); // best-effort
+      req.onerror = () => resolve();
       req.onblocked = () => resolve();
     });
+  }
+
+  /** Lists existing IndexedDB database names, or null if unsupported (old iOS). */
+  static async listDatabaseNames(): Promise<string[] | null> {
+    const f = idb() as IDBFactory & {
+      databases?: () => Promise<{ name?: string }[]>;
+    };
+    if (typeof f.databases !== "function") return null;
+    try {
+      const dbs = await f.databases();
+      return dbs.map((d) => d.name ?? "").filter(Boolean);
+    } catch {
+      return null;
+    }
   }
 
   private strip(r: StoredRecord): RemoteRecord {

@@ -17,7 +17,12 @@ import { log, setDebugLogging } from "./logger";
 import { initLocale, t } from "./i18n";
 import { isIgnored, parseIgnorePatterns } from "./ignore";
 import { InMemoryRemoteStore, RemoteStore } from "./remote-store";
-import { IndexedDbRemoteStore, indexedDbAvailable } from "./remote-store-idb";
+import {
+  IndexedDbRemoteStore,
+  indexedDbAvailable,
+  remoteDbName,
+  REMOTE_DB_PREFIX,
+} from "./remote-store-idb";
 
 /** Engine + state store pair for a single sync target. */
 interface TargetRuntime {
@@ -48,8 +53,6 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   private statusBarEl: HTMLElement | null = null;
   /** Paths written by the sync itself — ignore their events. */
   private suppressedPaths = new Set<string>();
-  /** Monotonic counter for unique per-run IndexedDB names (see createRemoteStore). */
-  private remoteDbSeq = 0;
 
   async onload(): Promise<void> {
     // Couple the UI language to the Obsidian setting (fallback English).
@@ -73,6 +76,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     await this.rebuildRuntimes();
     // Remove state files of targets that no longer exist (data hygiene).
     await this.cleanupOrphanStateFiles();
+    // Remove orphan remote-store IndexedDB databases (from crashed runs / removed
+    // targets). Best-effort; never blocks load.
+    void this.cleanupOrphanRemoteDbs();
 
     this.addSettingTab(new SettingsTab(this.app, this));
 
@@ -193,13 +199,13 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     // gds-remote-<id>). Falls back to in-memory only if IndexedDB is absent.
     if (indexedDbAvailable()) {
       try {
-        // UNIQUE db name per run. dispose() deletes the DB asynchronously; a
-        // fast auto-resume (next batch) would otherwise re-open the SAME name
-        // while the previous delete is still pending/blocked → transactions on a
-        // half-torn-down DB fail ("without an in-progress transaction"). A fresh
-        // name each run sidesteps that race entirely.
-        this.remoteDbSeq++;
-        const name = `gds-remote-${targetId}-${this.remoteDbSeq}`;
+        // ONE deterministic DB name per target. sync() calls store.clear() at
+        // run start, so reusing the same DB across runs is safe and avoids the
+        // orphan-DB accumulation a per-run name caused (a crashed run never
+        // disposes → leaks). runSync is serialized (this.running), so no two
+        // runs for a target open it concurrently. open() also deletes any stale
+        // DB of the SAME name first to avoid reopening a half-torn-down one.
+        const name = remoteDbName(targetId);
         const store = await IndexedDbRemoteStore.open(name);
         log.info(`Remote store: IndexedDB (${name})`);
         return store;
@@ -236,6 +242,32 @@ export default class GoogleDriveSyncPlugin extends Plugin {
         await this.storage.remove(name);
         log.info("Verwaiste Fetch-Spill-Datei entfernt:", name);
       }
+    }
+  }
+
+  /**
+   * Deletes orphan remote-store IndexedDB databases: any `gds-remote-*` DB whose
+   * target no longer exists, plus (defensively) the current targets' DBs at load
+   * time — they only hold a transient per-run listing that sync() clears/rebuilds
+   * anyway, so clearing stale content from a crashed run is safe and frees space.
+   * Best-effort; skipped silently if the runtime can't enumerate databases.
+   */
+  private async cleanupOrphanRemoteDbs(): Promise<void> {
+    if (!indexedDbAvailable()) return;
+    try {
+      const names = await IndexedDbRemoteStore.listDatabaseNames();
+      if (!names) return; // enumeration unsupported (old iOS) — leave as-is
+      const active = new Set(
+        this.settings.targets.map((tg) => remoteDbName(tg.id))
+      );
+      for (const name of names) {
+        if (name.startsWith(REMOTE_DB_PREFIX) && !active.has(name)) {
+          await IndexedDbRemoteStore.deleteDatabase(name);
+          log.info("Verwaiste Remote-Store-DB entfernt:", name);
+        }
+      }
+    } catch (e) {
+      log.warn("Remote-Store-DB-Cleanup fehlgeschlagen:", e);
     }
   }
 

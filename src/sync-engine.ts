@@ -604,13 +604,11 @@ export class SyncEngine {
       if (slice.length < work.length) capped = true;
 
       await runPool(slice, transferConcurrency(), async (action) => {
+        let ok = true;
         try {
           await this.applyAction(action, local, remoteMap, summary);
-          this.status.append(
-            "info",
-            t("engineActionDone", { action: describeAction(action) })
-          );
         } catch (e) {
+          ok = false;
           const detail = t("engineActionError", {
             type: action.type,
             path: pathOfAction(action),
@@ -621,6 +619,26 @@ export class SyncEngine {
           log.error("Aktion fehlgeschlagen:", detail, e);
         }
         done++;
+        if (ok) {
+          // ONE line: "(done/total)" progress at the START, plus a transport tag
+          // on downloads (fetch = native bridge-bypass, req = requestUrl). No
+          // duplicate count at the end.
+          const tag =
+            action.type === "download"
+              ? this.drive.downloadTransport() === "fetch"
+                ? " [fetch]"
+                : this.drive.downloadTransport() === "requestUrl"
+                  ? " [req]"
+                  : ""
+              : "";
+          this.status.append(
+            "info",
+            `${describeAction(action, `(${done}/${total})`)} ✓${tag}`
+          );
+        }
+        // Update the progress counters (status bar / progress ring). The status
+        // bar shows the current action with the count at the START; the log line
+        // above is the durable record. Both carry the count once, at the start.
         this.status.update(describeAction(action, `(${done}/${total})`), done, total);
         if (++sinceCheckpoint >= CHECKPOINT_EVERY) {
           sinceCheckpoint = 0;
