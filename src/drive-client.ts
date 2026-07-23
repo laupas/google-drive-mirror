@@ -48,6 +48,24 @@ const RETRY_BASE_MS = 500;
  */
 const LIST_CONCURRENCY = 16;
 
+/**
+ * How many parent folders are queried in ONE list request during the recursive
+ * (BFS) listing, using `('idA' in parents or 'idB' in parents ...)`. Drive
+ * returns each item with its `parents`, so results are attributed back to the
+ * right folder. This collapses ~one-request-per-folder into ~folders/N requests
+ * — the dominant fetch speed-up on a Drive with many folders. Kept modest so
+ * the `q` string stays well within Drive's query-length limits (~40 chars per
+ * parent clause; 50 → ~2 KB).
+ */
+const LIST_PARENTS_PER_QUERY = 50;
+
+/**
+ * Use the batched multi-parent query (above) for the BFS listing. Kept as a
+ * flag so the original one-request-per-folder path stays a one-line fallback if
+ * the batched query ever misbehaves against a specific Drive.
+ */
+const LIST_BATCH_PARENTS = true;
+
 /** Live progress of a recursive `listFiles` run, reported per folder level. */
 export interface ListProgress {
   /** Number of subfolders discovered so far. */
@@ -253,26 +271,57 @@ export class GoogleDriveClient {
       onProgress?.({ foldersScanned: folders.length, filesFound: fileCount });
     };
 
+    // Reduce one folder's direct children into files/folders/nextLevel. Shared
+    // by the batched and fallback paths so both produce identical results.
+    const reduceChildren = async (
+      prefix: string,
+      children: RawDriveFile[],
+      nextLevel: { id: string; prefix: string }[]
+    ): Promise<void> => {
+      for (const f of children) {
+        const relativePath = prefix ? `${prefix}/${f.name}` : f.name;
+        if (f.mimeType === FOLDER_MIME) {
+          if (f.trashed) continue;
+          folders.push({ id: f.id, relativePath });
+          nextLevel.push({ id: f.id, prefix: relativePath });
+        } else {
+          await emitFile({ ...this.mapFile(f), relativePath });
+        }
+      }
+    };
+
     while (level.length > 0) {
       const nextLevel: { id: string; prefix: string }[] = [];
-      await forEachPool(level, concurrency, async ({ id, prefix }) => {
-        const children = await this.listChildren(id, undefined);
-        for (const f of children) {
-          const relativePath = prefix ? `${prefix}/${f.name}` : f.name;
-          if (f.mimeType === FOLDER_MIME) {
-            if (f.trashed) continue;
-            folders.push({ id: f.id, relativePath });
-            nextLevel.push({ id: f.id, prefix: relativePath });
-          } else {
-            await emitFile({ ...this.mapFile(f), relativePath });
-          }
+      const prefixOf = new Map(level.map((n) => [n.id, n.prefix]));
+
+      if (LIST_BATCH_PARENTS) {
+        // Batched: chunk the level's folder ids, one query per chunk (up to
+        // LIST_PARENTS_PER_QUERY parents each), chunks run with bounded
+        // concurrency. Far fewer round-trips than one-request-per-folder.
+        const chunks: string[][] = [];
+        for (let i = 0; i < level.length; i += LIST_PARENTS_PER_QUERY) {
+          chunks.push(
+            level.slice(i, i + LIST_PARENTS_PER_QUERY).map((n) => n.id)
+          );
         }
-        reportProgress();
-      });
-      // Note: order within a level is no longer strictly input-order (folders
-      // are reduced as they complete). relativePath is derived per item from its
-      // own prefix, so paths stay correct; only the array order can vary, which
-      // the reconciler (keyed by relativePath) does not depend on.
+        await forEachPool(chunks, concurrency, async (ids) => {
+          const byParent = await this.listChildrenBatch(ids, undefined);
+          for (const [id, children] of byParent) {
+            await reduceChildren(prefixOf.get(id) ?? "", children, nextLevel);
+          }
+          reportProgress();
+        });
+      } else {
+        // Fallback: one request per folder (original behavior).
+        await forEachPool(level, concurrency, async ({ id, prefix }) => {
+          const children = await this.listChildren(id, undefined);
+          await reduceChildren(prefix, children, nextLevel);
+          reportProgress();
+        });
+      }
+      // Note: order within a level is not strictly input-order. relativePath is
+      // derived per item from its own prefix, so paths stay correct; only array
+      // order can vary, which the reconciler (keyed by relativePath) ignores.
       level = nextLevel;
     }
     reportProgress(true); // final counts
@@ -374,6 +423,66 @@ export class GoogleDriveClient {
     } while (pageToken);
 
     return out;
+  }
+
+  /**
+   * Lists the direct children of MANY folders in one paginated query, using
+   * `('idA' in parents or 'idB' in parents ...)`. Returns a map from each
+   * QUERIED folder id → its direct children. Attribution: each returned item is
+   * placed under whichever queried id appears in its `parents` (an item can have
+   * several parents; only queried ones are relevant, and within one BFS level
+   * the queried ids are distinct folders so at most one matches per item).
+   *
+   * Equivalent result to calling `listChildren` per id, but with
+   * folders/`LIST_PARENTS_PER_QUERY` requests instead of one per folder.
+   */
+  private async listChildrenBatch(
+    folderIds: string[],
+    driveId?: string
+  ): Promise<Map<string, RawDriveFile[]>> {
+    const result = new Map<string, RawDriveFile[]>();
+    for (const id of folderIds) result.set(id, []);
+    if (folderIds.length === 0) return result;
+
+    const parentsClause = folderIds
+      .map((id) => `'${escapeDriveQueryValue(id)}' in parents`)
+      .join(" or ");
+
+    let pageToken: string | undefined;
+    do {
+      const params = new URLSearchParams({
+        q: `(${parentsClause}) and trashed = false`,
+        fields: `nextPageToken,files(${FILE_FIELDS})`,
+        pageSize: "1000",
+        supportsAllDrives: "true",
+        includeItemsFromAllDrives: "true",
+      });
+      if (driveId) {
+        params.set("corpora", "drive");
+        params.set("driveId", driveId);
+      }
+      if (pageToken) params.set("pageToken", pageToken);
+
+      const resp = await this.request({
+        url: `${DRIVE_API}/files?${params.toString()}`,
+        method: "GET",
+        headers: await this.authHeader(),
+        throw: false,
+      });
+      this.assertOk(resp, "driveActionListFiles");
+
+      const json = resp.json as { files: RawDriveFile[]; nextPageToken?: string };
+      for (const f of json.files ?? []) {
+        // Attribute to each queried parent this item lists (normally one).
+        for (const p of f.parents ?? []) {
+          const bucket = result.get(p);
+          if (bucket) bucket.push(f);
+        }
+      }
+      pageToken = json.nextPageToken;
+    } while (pageToken);
+
+    return result;
   }
 
   /** Returns the vault-relative path of a Drive file. */

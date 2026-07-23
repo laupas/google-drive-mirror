@@ -34,6 +34,29 @@ function listResponse(files: unknown[], nextPageToken?: string) {
   } as unknown;
 }
 
+/**
+ * Parent-aware mock: given a tree keyed by parent folder id, returns a
+ * requestUrl implementation that parses the queried parent ids from the URL
+ * (the BFS batches many via `'id' in parents or …`) and returns the UNION of
+ * those parents' children — each child carrying `parents: [parentId]`, exactly
+ * as real Drive does, so the batched attribution can place them. This exercises
+ * the multi-parent batching realistically.
+ */
+function treeMock(tree: Record<string, unknown[]>) {
+  return (params: { url: string }) => {
+    const url = decodeURIComponent(params.url).replace(/\+/g, " ");
+    const files: unknown[] = [];
+    for (const [parent, children] of Object.entries(tree)) {
+      if (url.includes(`'${parent}' in parents`)) {
+        for (const c of children) {
+          files.push({ ...(c as object), parents: [parent] });
+        }
+      }
+    }
+    return Promise.resolve(listResponse(files)) as never;
+  };
+}
+
 beforeEach(() => {
   mockedRequestUrl.mockReset();
 });
@@ -108,8 +131,8 @@ describe("GoogleDriveClient.listFiles — Mapping", () => {
   it("setzt modifiedTimeMs auf 0 und size auf undefined bei fehlenden Feldern", async () => {
     // Arrange
     const c = client();
-    mockedRequestUrl.mockResolvedValue(
-      listResponse([{ id: "x", name: "n", mimeType: "text/plain" }])
+    mockedRequestUrl.mockImplementation(
+      treeMock({ root: [{ id: "x", name: "n", mimeType: "text/plain" }] })
     );
 
     // Act
@@ -125,10 +148,13 @@ describe("GoogleDriveClient.listFiles — Mapping", () => {
     const c = client();
     mockedRequestUrl
       .mockResolvedValueOnce(
-        listResponse([{ id: "1", name: "a", mimeType: "t" }], "page-2")
+        listResponse(
+          [{ id: "1", name: "a", mimeType: "t", parents: ["root"] }],
+          "page-2"
+        )
       )
       .mockResolvedValueOnce(
-        listResponse([{ id: "2", name: "b", mimeType: "t" }])
+        listResponse([{ id: "2", name: "b", mimeType: "t", parents: ["root"] }])
       );
 
     // Act
@@ -142,20 +168,21 @@ describe("GoogleDriveClient.listFiles — Mapping", () => {
   it("steigt rekursiv in Unterordner ab und baut den relativen Pfad auf", async () => {
     // Arrange: root contains folder 'sub' + file 'top.md'; 'sub' contains 'inner.md'.
     const c = client();
-    mockedRequestUrl
-      .mockResolvedValueOnce(
-        listResponse([
+    mockedRequestUrl.mockImplementation(
+      treeMock({
+        root: [
           {
             id: "sub-id",
             name: "sub",
             mimeType: "application/vnd.google-apps.folder",
           },
           { id: "top", name: "top.md", mimeType: "text/markdown" },
-        ])
-      )
-      .mockResolvedValueOnce(
-        listResponse([{ id: "inner", name: "inner.md", mimeType: "text/markdown" }])
-      );
+        ],
+        "sub-id": [
+          { id: "inner", name: "inner.md", mimeType: "text/markdown" },
+        ],
+      })
+    );
 
     // Act
     const { files, folders } = await c.listFiles("root");
@@ -184,42 +211,55 @@ describe("GoogleDriveClient.listFiles — Mapping", () => {
   });
 });
 
-describe("GoogleDriveClient.listFiles — parallel folder listing", () => {
-  it("lists sibling subfolders concurrently (per level), not one after another", async () => {
-    // Arrange: root has two subfolders 'a' and 'b'. Their child listings should
-    // be in-flight AT THE SAME TIME. We gate both on a barrier that only
-    // releases once both have started — a sequential BFS would deadlock here
-    // (the second never starts until the first resolves), so this test proving
-    // it completes is proof of concurrency.
+describe("GoogleDriveClient.listFiles — batched parent listing", () => {
+  it("lists sibling subfolders in ONE batched query and attributes by parent", async () => {
+    // Root has two subfolders 'a' and 'b'. With batching, a whole level's
+    // folders are queried in a single request `('a' in parents or 'b' in
+    // parents ...)`, and each returned item is attributed to its parent via
+    // `parents`. So level 1 (a + b) is ONE request, not two.
     const c = client();
-    let started = 0;
-    let releaseBarrier!: () => void;
-    const barrier = new Promise<void>((r) => (releaseBarrier = r));
-
+    let level1Requests = 0;
     mockedRequestUrl.mockImplementation((params: { url: string }) => {
-      // The query is URL-encoded (single quotes -> %27, spaces -> +), so
-      // normalize before matching on the parent-folder id.
       const url = decodeURIComponent(params.url).replace(/\+/g, " ");
-      // Root listing: return two folders. Resolves immediately.
       if (url.includes("'root' in parents")) {
         return Promise.resolve(
           listResponse([
-            { id: "a", name: "a", mimeType: "application/vnd.google-apps.folder" },
-            { id: "b", name: "b", mimeType: "application/vnd.google-apps.folder" },
+            {
+              id: "a",
+              name: "a",
+              mimeType: "application/vnd.google-apps.folder",
+              parents: ["root"],
+            },
+            {
+              id: "b",
+              name: "b",
+              mimeType: "application/vnd.google-apps.folder",
+              parents: ["root"],
+            },
           ])
         ) as never;
       }
-      // Both child listings wait on the shared barrier; the barrier releases
-      // only once BOTH have entered -> requires them to run concurrently.
-      if (url.includes("'a' in parents") || url.includes("'b' in parents")) {
-        started++;
-        if (started === 2) releaseBarrier();
-        const inA = url.includes("'a' in parents");
-        const id = inA ? "fa" : "fb";
-        const name = inA ? "in-a.md" : "in-b.md";
-        return barrier.then(
-          () => listResponse([{ id, name, mimeType: "text/markdown" }]) as never
-        ) as never;
+      // Level 1: both 'a' and 'b' come in ONE query.
+      const inA = url.includes("'a' in parents");
+      const inB = url.includes("'b' in parents");
+      if (inA || inB) {
+        level1Requests++;
+        const files: unknown[] = [];
+        if (inA)
+          files.push({
+            id: "fa",
+            name: "in-a.md",
+            mimeType: "text/markdown",
+            parents: ["a"],
+          });
+        if (inB)
+          files.push({
+            id: "fb",
+            name: "in-b.md",
+            mimeType: "text/markdown",
+            parents: ["b"],
+          });
+        return Promise.resolve(listResponse(files)) as never;
       }
       return Promise.resolve(listResponse([])) as never;
     });
@@ -227,8 +267,9 @@ describe("GoogleDriveClient.listFiles — parallel folder listing", () => {
     // Act
     const { files } = await c.listFiles("root");
 
-    // Assert: both leaf files collected; both child queries ran (concurrently).
-    expect(started).toBe(2);
+    // Assert: both leaf files collected & correctly attributed; level 1 was a
+    // SINGLE batched request (not one per folder).
+    expect(level1Requests).toBe(1);
     expect(files.map((f) => f.relativePath).sort()).toEqual([
       "a/in-a.md",
       "b/in-b.md",
@@ -237,33 +278,113 @@ describe("GoogleDriveClient.listFiles — parallel folder listing", () => {
 
   it("reports cumulative progress once per folder level via onProgress", async () => {
     // Arrange: root has folder 'sub' + file 'top.md'; 'sub' has 'inner.md'.
-    // Level 0 (root) discovers 1 folder + 1 file; level 1 ('sub') adds 1 file.
     const c = client();
-    mockedRequestUrl
-      .mockResolvedValueOnce(
-        listResponse([
+    mockedRequestUrl.mockImplementation(
+      treeMock({
+        root: [
           {
             id: "sub-id",
             name: "sub",
             mimeType: "application/vnd.google-apps.folder",
           },
           { id: "top", name: "top.md", mimeType: "text/markdown" },
-        ])
-      )
-      .mockResolvedValueOnce(
-        listResponse([
+        ],
+        "sub-id": [
           { id: "inner", name: "inner.md", mimeType: "text/markdown" },
-        ])
-      );
+        ],
+      })
+    );
     const progress: { foldersScanned: number; filesFound: number }[] = [];
 
     // Act
     await c.listFiles("root", undefined, (p) => progress.push({ ...p }));
 
-    // Assert: one callback per level, cumulative counts.
-    expect(progress).toEqual([
-      { foldersScanned: 1, filesFound: 1 },
-      { foldersScanned: 1, filesFound: 2 },
+    // Assert: progress is reported (throttled), counts are monotonic, and the
+    // FINAL callback carries the complete totals (1 folder, 2 files).
+    expect(progress.length).toBeGreaterThan(0);
+    for (let i = 1; i < progress.length; i++) {
+      expect(progress[i].foldersScanned).toBeGreaterThanOrEqual(
+        progress[i - 1].foldersScanned
+      );
+      expect(progress[i].filesFound).toBeGreaterThanOrEqual(
+        progress[i - 1].filesFound
+      );
+    }
+    expect(progress[progress.length - 1]).toEqual({
+      foldersScanned: 1,
+      filesFound: 2,
+    });
+  });
+
+  it("chunks a wide level into multiple batched queries and attributes every child", async () => {
+    // 120 sibling folders under root (> LIST_PARENTS_PER_QUERY=50), each with one
+    // file. Must be split into ceil(120/50)=3 batched queries for level 1, and
+    // every file attributed to the right parent.
+    const c = client();
+    const N = 120;
+    const tree: Record<string, unknown[]> = {
+      root: Array.from({ length: N }, (_, i) => ({
+        id: `d${i}`,
+        name: `d${i}`,
+        mimeType: "application/vnd.google-apps.folder",
+      })),
+    };
+    for (let i = 0; i < N; i++) {
+      tree[`d${i}`] = [{ id: `f${i}`, name: `f${i}.md`, mimeType: "text/markdown" }];
+    }
+    let level1Requests = 0;
+    mockedRequestUrl.mockImplementation((params: { url: string }) => {
+      const url = decodeURIComponent(params.url).replace(/\+/g, " ");
+      if (!url.includes("'root' in parents")) level1Requests++;
+      return treeMock(tree)(params);
+    });
+
+    // Act
+    const { files, folders } = await c.listFiles("root");
+
+    // Assert: all folders + files found, correctly pathed; level 1 batched into
+    // 3 requests (not 120).
+    expect(folders).toHaveLength(N);
+    expect(files).toHaveLength(N);
+    for (let i = 0; i < N; i++) {
+      expect(files.find((f) => f.relativePath === `d${i}/f${i}.md`)).toBeTruthy();
+    }
+    expect(level1Requests).toBe(Math.ceil(N / 50));
+  });
+
+  it("attributes a file to each queried parent it lists (multi-parent safe)", async () => {
+    // A file that lives under two folders a and b (Drive allows multiple
+    // parents). Both a and b are queried together; the file must appear under
+    // BOTH paths.
+    const c = client();
+    mockedRequestUrl.mockImplementation((params: { url: string }) => {
+      const url = decodeURIComponent(params.url).replace(/\+/g, " ");
+      if (url.includes("'root' in parents")) {
+        return Promise.resolve(
+          listResponse([
+            { id: "a", name: "a", mimeType: "application/vnd.google-apps.folder", parents: ["root"] },
+            { id: "b", name: "b", mimeType: "application/vnd.google-apps.folder", parents: ["root"] },
+          ])
+        ) as never;
+      }
+      if (url.includes("'a' in parents") || url.includes("'b' in parents")) {
+        // The shared file lists BOTH a and b as parents.
+        return Promise.resolve(
+          listResponse([
+            { id: "shared", name: "s.md", mimeType: "text/markdown", parents: ["a", "b"] },
+          ])
+        ) as never;
+      }
+      return Promise.resolve(listResponse([])) as never;
+    });
+
+    // Act
+    const { files } = await c.listFiles("root");
+
+    // Assert: the file appears under both parent paths.
+    expect(files.map((f) => f.relativePath).sort()).toEqual([
+      "a/s.md",
+      "b/s.md",
     ]);
   });
 });
